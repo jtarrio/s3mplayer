@@ -1,7 +1,8 @@
 import { Channel, Command, Instrument, Song } from "./song";
 
-export class Player {
+export class Player extends EventTarget {
   constructor(private song: Song) {
+    super();
     this.tempo = song.tempo;
     this.songSpeed = song.speed;
     this.order = 0;
@@ -12,9 +13,9 @@ export class Player {
     this.running = false;
     this.millisPerTick = 2500 / song.tempo;
     this.millisPlayed = 0;
+    this.startTime = 0;
     this.channels = new Map();
     this.samples = [];
-    this.cues = new Map();
   }
 
   private tempo: number;
@@ -27,13 +28,14 @@ export class Player {
   private running: boolean;
   private millisPerTick: number;
   private millisPlayed: number;
+  private startTime: number;
   private ctx?: AudioContext;
   private channels: Map<number, ChannelPlayer>;
   private samples: Sample[];
-  private cues: Map<string, ((p: Player) => void)[]>;
 
   play() {
     this.init();
+    this.startTime = this.ctx!.currentTime - this.millisPlayed / 1000;
     this.updateTimings();
     this.running = true;
     this.doFrame();
@@ -42,18 +44,6 @@ export class Player {
   stop() {
     this.running = false;
     this.channels.forEach((c) => c.stop());
-  }
-
-  async waitForCue(order: number, row: number): Promise<Player> {
-    let { promise, resolve } = Promise.withResolvers<Player>();
-    let key = order + "," + row;
-    let cueList = this.cues.get(key);
-    if (cueList === undefined) {
-      cueList = [];
-      this.cues.set(key, cueList);
-    }
-    cueList.push(resolve);
-    return promise;
   }
 
   getSample(num: number): Sample {
@@ -95,10 +85,33 @@ export class Player {
     this.updateTimings();
   }
 
+  addEventListener<K extends keyof PlayerEventMap>(
+    type: K,
+    listener: (this: Player, ev: PlayerEventMap[K]) => any,
+    options?: boolean | AddEventListenerOptions
+  ): void;
+  addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject | null,
+    options?: boolean | AddEventListenerOptions
+  ): void;
+  addEventListener(
+    type: string,
+    listener: any,
+    options?: boolean | AddEventListenerOptions
+  ): void {
+    super.addEventListener(
+      type,
+      listener as EventListenerOrEventListenerObject | null,
+      options
+    );
+  }
+
   private init() {
     if (this.ctx) return;
     let ctx = new AudioContext();
     this.ctx = ctx;
+    this.startTime = ctx.currentTime;
     this.song.channels.forEach((channel, num) =>
       this.channels.set(num, new ChannelPlayer(ctx, this, channel))
     );
@@ -112,7 +125,10 @@ export class Player {
   }
 
   private doFrame() {
-    while (this.ctx!.currentTime * 1000 > this.millisPlayed) {
+    while (
+      (this.ctx!.currentTime - this.startTime) * 1000 >
+      this.millisPlayed
+    ) {
       this.doTick();
       this.millisPlayed += this.millisPerTick;
     }
@@ -127,8 +143,6 @@ export class Player {
       this.updateEffects();
       return;
     }
-    let cues = this.cues.get(this.order + "," + this.row);
-    if (cues) cues.forEach((c) => c(this));
     if (!this.running) {
       this.stop();
       return;
@@ -138,6 +152,13 @@ export class Player {
       this.order++;
     }
     if (this.order == this.song.orders.length) {
+      this.stop();
+      return;
+    }
+    let proceed = this.dispatchEvent(
+      new BeforePlayEvent({ order: this.order, row: this.row })
+    );
+    if (!proceed) {
       this.stop();
       return;
     }
@@ -160,6 +181,23 @@ export class Player {
   private updateEffects() {
     this.channels.forEach((chn) => chn.updateEffects());
   }
+}
+
+export type Measure = { order: number; row: number };
+abstract class PlayerEvent extends CustomEvent<Measure> {
+  constructor(type: string, measure: Measure) {
+    super(type, { detail: measure, bubbles: true, cancelable: true });
+  }
+}
+
+export class BeforePlayEvent extends PlayerEvent {
+  constructor(measure: Measure) {
+    super("before-play", measure);
+  }
+}
+
+interface PlayerEventMap {
+  "before-play": BeforePlayEvent;
 }
 
 enum Effect {
@@ -227,8 +265,8 @@ class ChannelPlayer {
     this.gain = ctx.createGain();
     this.panner = ctx.createStereoPanner();
     this.effectInfo = new EffectInfo();
-    this.state = InitialChannelState();
-    this.nextState = EmptyChannelState();
+    this.state = NewChannelState();
+    this.nextState = EmptyNextState();
 
     this.gain.gain.value = 1;
     this.panner.pan.value = channel.pan;
@@ -241,7 +279,7 @@ class ChannelPlayer {
   private sound?: AudioBufferSourceNode;
   private effectInfo: EffectInfo;
   private state: ChannelState;
-  private nextState: ChannelState;
+  private nextState: NextState;
 
   stop() {
     if (!this.sound) return;
@@ -330,18 +368,23 @@ class ChannelPlayer {
           switch (this.effectInfo.currentSubeffect) {
             case Subeffect.NoteDelay:
               this.effectInfo.noteDelay = subinfo;
-              this.effectInfo.delayedState = this.nextState;
-              this.nextState = EmptyChannelState();
+              this.effectInfo.stateChange = this.nextState;
+              this.nextState = EmptyNextState();
               break;
             default:
-              throw `Unknown subeffect: ${this.effectInfo.currentSubeffect
-                .toString()
-                .toUpperCase()}`;
+              console.log(
+                `Unknown subeffect: ${this.effectInfo.currentSubeffect
+                  .toString()
+                  .toUpperCase()}`
+              );
           }
+          break;
         default:
-          throw `Unknown effect: ${String.fromCharCode(
-            64 + cmd.effect.number
-          )} (${cmd.effect.number})`;
+          console.log(
+            `Unknown effect: ${String.fromCharCode(64 + cmd.effect.number)} (${
+              cmd.effect.number
+            })`
+          );
       }
     }
 
@@ -381,8 +424,8 @@ class ChannelPlayer {
           case Subeffect.NoteDelay:
             this.doSubeffectNoteDelay();
             break;
-          // Fallthrough
         }
+        break;
     }
     this.applyNextState();
   }
@@ -416,7 +459,9 @@ class ChannelPlayer {
     } else if (this.nextState.periodDelta != this.state.periodDelta) {
       this.state.periodDelta = this.nextState.periodDelta;
       if (this.sound) {
-        this.sound.playbackRate.value = FromToPeriod(this.state.periodDelta);
+        this.sound.playbackRate.value = FromToPeriod(
+          this.state.period + this.state.periodDelta
+        );
       }
     }
 
@@ -425,7 +470,7 @@ class ChannelPlayer {
       this.gain.gain.value = this.state.volume;
     }
 
-    this.nextState = EmptyChannelState();
+    this.nextState = EmptyNextState();
   }
 
   private makeNewSound(sample: Sample): AudioBufferSourceNode {
@@ -440,7 +485,7 @@ class ChannelPlayer {
   }
 
   private doEffectSlide() {
-    let state = MergeChannelStates(this.state, this.nextState);
+    let state = ApplyStateChange(this.state, this.nextState);
     let tick = this.player.tick;
     let param = this.effectInfo.slideSpeed;
     let gain = Math.round((state.volume || 0) * 64);
@@ -462,7 +507,7 @@ class ChannelPlayer {
   }
 
   private doEffectPitchDown() {
-    let state = MergeChannelStates(this.state, this.nextState);
+    let state = ApplyStateChange(this.state, this.nextState);
     let tick = this.player.tick;
     let param = this.effectInfo.portamentoSpeed!;
     let period = state.period || 0;
@@ -482,7 +527,7 @@ class ChannelPlayer {
   }
 
   private doEffectPitchUp() {
-    let state = MergeChannelStates(this.state, this.nextState);
+    let state = ApplyStateChange(this.state, this.nextState);
     let tick = this.player.tick;
     let param = this.effectInfo.portamentoSpeed!;
     let period = state.period || 0;
@@ -502,7 +547,7 @@ class ChannelPlayer {
   }
 
   private doEffectNotePortamento() {
-    let state = MergeChannelStates(this.state, this.nextState);
+    let state = ApplyStateChange(this.state, this.nextState);
     let tick = this.player.tick;
     let param = this.effectInfo.portamentoSpeed!;
     let target = this.effectInfo.periodToPortamento;
@@ -518,7 +563,7 @@ class ChannelPlayer {
   }
 
   private doEffectVibrato() {
-    let state = MergeChannelStates(this.state, this.nextState);
+    let state = ApplyStateChange(this.state, this.nextState);
     let tick = this.player.tick;
     let param = this.effectInfo.vibrato;
     let speed = (param & 0xf0) >> 4;
@@ -537,7 +582,7 @@ class ChannelPlayer {
   }
 
   private doEffectArpeggio() {
-    let state = MergeChannelStates(this.state, this.nextState);
+    let state = ApplyStateChange(this.state, this.nextState);
     let tick = this.player.tick;
     let param = this.effectInfo.arpeggio;
     let semitone = [(param & 0xf0) >> 4, param & 0x0f];
@@ -558,7 +603,7 @@ class ChannelPlayer {
   }
 
   private doEffectOffset(param: number) {
-    let state = MergeChannelStates(this.state, this.nextState);
+    let state = ApplyStateChange(this.state, this.nextState);
     let skip = param * 0x100;
     this.nextState.offset = skip / (state.sample?.middleCFreq || 1);
   }
@@ -599,8 +644,8 @@ class ChannelPlayer {
   private doSubeffectNoteDelay() {
     let tick = this.player.tick;
     let param = this.effectInfo.noteDelay;
-    if (tick == param && this.effectInfo.delayedState) {
-      this.nextState = this.effectInfo.delayedState;
+    if (tick == param && this.effectInfo.stateChange) {
+      this.nextState = this.effectInfo.stateChange;
     }
   }
 }
@@ -614,7 +659,7 @@ class EffectInfo {
   vibrato: number = 0;
   arpeggio: number = 0;
   noteDelay: number = 0;
-  delayedState?: ChannelState;
+  stateChange?: NextState;
   retrig: number = 0;
 }
 
@@ -648,20 +693,17 @@ function sampleFromInstrument(
 }
 
 type ChannelState = {
-  sample?: Sample;
-  period?: number;
-  volume?: number;
-  offset?: number;
-  vibratoPosition?: number;
+  sample: Sample | undefined;
+  period: number;
+  volume: number;
+  offset: number;
+  vibratoPosition: number;
   periodDelta: number;
 };
 
-function EmptyChannelState(): ChannelState {
-  return { periodDelta: 0 };
-}
-
-function InitialChannelState(): ChannelState {
+function NewChannelState(): ChannelState {
   return {
+    sample: undefined,
     period: 1712,
     volume: 0,
     offset: 0,
@@ -670,14 +712,22 @@ function InitialChannelState(): ChannelState {
   };
 }
 
-function MergeChannelStates(a: ChannelState, b: ChannelState): ChannelState {
+type NextState = Partial<ChannelState> & { periodDelta: number };
+
+function EmptyNextState(): NextState {
   return {
-    sample: b.sample === undefined ? a.sample : b.sample,
-    period: b.period === undefined ? a.period : b.period,
-    volume: b.volume === undefined ? a.volume : b.volume,
-    offset: b.offset === undefined ? a.offset : b.offset,
+    periodDelta: 0,
+  };
+}
+
+function ApplyStateChange(c: ChannelState, n: NextState): ChannelState {
+  return {
+    sample: n.sample === undefined ? c.sample : n.sample,
+    period: n.period === undefined ? c.period : n.period,
+    volume: n.volume === undefined ? c.volume : n.volume,
+    offset: n.offset === undefined ? c.offset : n.offset,
     vibratoPosition:
-      b.vibratoPosition === undefined ? a.vibratoPosition : b.vibratoPosition,
-    periodDelta: b.periodDelta,
+      n.vibratoPosition === undefined ? c.vibratoPosition : n.vibratoPosition,
+    periodDelta: n.periodDelta,
   };
 }
