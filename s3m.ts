@@ -91,7 +91,6 @@ function ParsePattern(
       continue;
     }
     let channel = c & 0x1f;
-    if (!channels.has(channel)) continue;
     let note: Note | undefined;
     let volume: number | undefined;
     let effect: Effect | undefined;
@@ -119,6 +118,7 @@ function ParsePattern(
       };
       i += 2;
     }
+    if (!channels.has(channel)) continue;
     row.push({ channel, note, volume, effect });
   }
   if (row.length != 0) {

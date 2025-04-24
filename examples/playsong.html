@@ -15,7 +15,7 @@
         .then((s3m) => ParseS3M(new Uint8Array(s3m)))
         .then((song) => {
           the_song = new Player(song);
-          the_song.order = 5;
+          // the_song.order = 22;
           the_song.addEventListener("before-play", onBeforePlay);
         });
 
