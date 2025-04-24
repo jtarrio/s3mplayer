@@ -149,7 +149,7 @@ function ParseInstrument(data: Data, offset: number): Instrument | undefined {
     for (let i = 0; i < byte_sample.length; ++i) {
       sample[i] = byte_sample[i] / 127.5 - 1;
     }
-} else if (type == 0) {
+  } else if (type == 0) {
     // do nothing
   } else if (packed || mark != "SCRS") {
     throw "Not a supported instrument";
