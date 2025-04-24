@@ -254,93 +254,95 @@ class ChannelPlayer {
   }
 
   doCommand(cmd: Command) {
-    if (cmd.instrument) {
-      let sample = this.player.getSample(cmd.instrument - 1);
-      this.nextState.sample = sample;
-      this.nextState.volume = sample.volume;
+    if (cmd.note) {
+      if (cmd.note.off) {
+        this.nextState.period = 0;
+      } else {
+        this.nextState.period = kNotePeriods[cmd.note.number];
+        if (cmd.note.instrument > 0) {
+          let sample = this.player.getSample(cmd.note.instrument - 1);
+          this.nextState.sample = sample;
+          this.nextState.volume = sample.volume;
+        }
+      }
     }
 
     if (cmd.volume !== undefined) {
       this.nextState.volume = cmd.volume;
     }
 
-    if (cmd.note !== undefined) {
-      this.nextState;
-      if (cmd.note >= kNotePeriods.length) {
-        this.nextState.period = 0;
-      } else {
-        this.nextState.period = kNotePeriods[cmd.note];
+    if (cmd.effect) {
+      this.effectInfo.currentEffect = cmd.effect.number;
+      switch (cmd.effect.number) {
+        case Effect.Speed:
+          this.player.speed = cmd.effect.info;
+          break;
+        case Effect.Jump:
+          this.player.jumpToOrder(cmd.effect.info);
+          break;
+        case Effect.Break:
+          let row =
+            ((cmd.effect.info! & 0xf0) >> 4) * 10 + (cmd.effect.info & 0x0f);
+          this.player.breakPattern(row);
+          break;
+        case Effect.Slide:
+          if (cmd.effect.info) this.effectInfo.slideSpeed = cmd.effect.info;
+          this.doEffectSlide();
+          break;
+        case Effect.PitchDown:
+          if (cmd.effect.info)
+            this.effectInfo.portamentoSpeed = cmd.effect.info;
+          this.doEffectPitchDown();
+          break;
+        case Effect.PitchUp:
+          if (cmd.effect.info)
+            this.effectInfo.portamentoSpeed = cmd.effect.info;
+          this.doEffectPitchUp();
+          break;
+        case Effect.NotePortamento:
+          if (this.nextState.period !== undefined) {
+            this.effectInfo.periodToPortamento = this.nextState.period;
+            this.nextState.period = undefined;
+          }
+          if (cmd.effect.info)
+            this.effectInfo.portamentoSpeed = cmd.effect.info;
+          this.doEffectNotePortamento();
+          break;
+        case Effect.Vibrato:
+          if (cmd.effect.info) this.effectInfo.vibrato = cmd.effect.info;
+          this.doEffectVibrato();
+          break;
+        case Effect.Arpeggio:
+          if (cmd.effect.info) this.effectInfo.arpeggio = cmd.effect.info;
+          break;
+        case Effect.VibratoSlide:
+          if (cmd.effect.info) this.effectInfo.slideSpeed = cmd.effect.info;
+          break;
+        case Effect.Offset:
+          this.doEffectOffset(cmd.effect.info || 0);
+          break;
+        case Effect.Retrig:
+          if (cmd.effect.info) this.effectInfo.retrig = cmd.effect.info;
+          break;
+        case Effect.SMulti:
+          this.effectInfo.currentSubeffect = (cmd.effect.info! & 0xf0) >> 4;
+          let subinfo = cmd.effect.info! & 0x0f;
+          switch (this.effectInfo.currentSubeffect) {
+            case Subeffect.NoteDelay:
+              this.effectInfo.noteDelay = subinfo;
+              this.effectInfo.delayedState = this.nextState;
+              this.nextState = EmptyChannelState();
+              break;
+            default:
+              throw `Unknown subeffect: ${this.effectInfo.currentSubeffect
+                .toString()
+                .toUpperCase()}`;
+          }
+        default:
+          throw `Unknown effect: ${String.fromCharCode(
+            64 + cmd.effect.number
+          )} (${cmd.effect.number})`;
       }
-    }
-
-    this.effectInfo.currentEffect = cmd.effect;
-    switch (cmd.effect) {
-      case undefined:
-        break;
-      case Effect.Speed:
-        this.player.speed = cmd.info!;
-        break;
-      case Effect.Jump:
-        this.player.jumpToOrder(cmd.info!);
-        break;
-      case Effect.Break:
-        let row = ((cmd.info! & 0xf0) >> 4) * 10 + (cmd.info! & 0x0f);
-        this.player.breakPattern(row);
-        break;
-      case Effect.Slide:
-        if (cmd.info) this.effectInfo.slideSpeed = cmd.info;
-        this.doEffectSlide();
-        break;
-      case Effect.PitchDown:
-        if (cmd.info) this.effectInfo.portamentoSpeed = cmd.info;
-        this.doEffectPitchDown();
-        break;
-      case Effect.PitchUp:
-        if (cmd.info) this.effectInfo.portamentoSpeed = cmd.info;
-        this.doEffectPitchUp();
-        break;
-      case Effect.NotePortamento:
-        if (this.nextState.period !== undefined) {
-          this.effectInfo.periodToPortamento = this.nextState.period;
-          this.nextState.period = undefined;
-        }
-        if (cmd.info) this.effectInfo.portamentoSpeed = cmd.info;
-        this.doEffectNotePortamento();
-        break;
-      case Effect.Vibrato:
-        if (cmd.info) this.effectInfo.vibrato = cmd.info;
-        this.doEffectVibrato();
-        break;
-      case Effect.Arpeggio:
-        if (cmd.info) this.effectInfo.arpeggio = cmd.info;
-        break;
-      case Effect.VibratoSlide:
-        if (cmd.info) this.effectInfo.slideSpeed = cmd.info;
-        break;
-      case Effect.Offset:
-        this.doEffectOffset(cmd.info || 0);
-        break;
-      case Effect.Retrig:
-        if (cmd.info) this.effectInfo.retrig = cmd.info;
-        break;
-      case Effect.SMulti:
-        this.effectInfo.currentSubeffect = (cmd.info! & 0xf0) >> 4;
-        let subinfo = cmd.info! & 0x0f;
-        switch (this.effectInfo.currentSubeffect) {
-          case Subeffect.NoteDelay:
-            this.effectInfo.noteDelay = subinfo;
-            this.effectInfo.delayedState = this.nextState;
-            this.nextState = EmptyChannelState();
-            break;
-          default:
-            throw `Unknown subeffect: ${this.effectInfo.currentSubeffect
-              .toString()
-              .toUpperCase()}`;
-        }
-      default:
-        throw `Unknown effect: ${String.fromCharCode(64 + cmd.effect)} (${
-          cmd.effect
-        })`;
     }
 
     this.applyNextState();
@@ -566,11 +568,28 @@ class ChannelPlayer {
     let param = this.effectInfo.retrig;
     let slide = (param & 0xf0) >> 4;
     let ticks = param & 0x0f;
-    if ((ticks % tick) != 0) return;
+    if (ticks % tick != 0) return;
     this.nextState.period = this.state.period;
     this.nextState.sample = this.state.sample;
     let gain = Math.round((this.state.volume || 0) * 64);
-    const slide_amounts = [0, -1, -2, -4, -8, -16, 2 / 3, 1 / 2, 0, 1, 2, 4, 8, 16, 3 / 2, 2];
+    const slide_amounts = [
+      0,
+      -1,
+      -2,
+      -4,
+      -8,
+      -16,
+      2 / 3,
+      1 / 2,
+      0,
+      1,
+      2,
+      4,
+      8,
+      16,
+      3 / 2,
+      2,
+    ];
     let amount = slide_amounts[slide];
     gain += amount;
     gain = Math.max(0, Math.min(64, gain));

@@ -14,13 +14,20 @@ export type Instrument = {
   sample: Float32Array;
 };
 
+export type Note =
+  | { off: true }
+  | { off: false; number: number; instrument: number };
+
+export type Effect = {
+  number: number;
+  info: number;
+};
+
 export type Command = {
   channel: number;
-  note?: number;
-  instrument?: number;
+  note?: Note;
   volume?: number;
-  effect?: number;
-  info?: number;
+  effect?: Effect;
 };
 
 export type Row = Command[];

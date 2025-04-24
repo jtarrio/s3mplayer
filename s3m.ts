@@ -1,4 +1,4 @@
-import { Channel, Instrument, Pattern, Row, Song } from "./song";
+import { Channel, Effect, Instrument, Note, Pattern, Row, Song } from "./song";
 
 export function ParseS3M(s3m: Uint8Array): Song {
   const data = new Data(s3m);
@@ -10,59 +10,64 @@ export function ParseS3M(s3m: Uint8Array): Song {
     throw "Not an S3M file";
   }
   let name = data.asciiz(0, 28);
-  let num_orders = data.word(0x20);
-  let num_instruments = data.word(0x22);
-  let num_patterns = data.word(0x24);
-  let global_volume = data.byte(0x30);
-  let initial_speed = data.byte(0x31);
-  let initial_tempo = data.byte(0x32);
-  let master_volume = data.byte(0x33);
-  let default_pan = data.byte(0x34);
+  let numOrders = data.word(0x20);
+  let numInstruments = data.word(0x22);
+  let numPatterns = data.word(0x24);
+  let globalVolume = data.byte(0x30);
+  let speed = data.byte(0x31);
+  let tempo = data.byte(0x32);
+  let masterVolume = data.byte(0x33);
+  let defaultPan = data.byte(0x35);
+
   let channels: Map<number, Channel> = new Map();
   for (let i = 0; i < 32; ++i) {
     let pan = data.byte(0x40 + i);
     if (pan > 15) continue;
     let name = pan <= 7 ? "L" + (pan + 1) : "R" + (pan - 7);
-    channels.set(i, { name, pan: pan / 7.5 - 1 });
+    channels.set(i, { name, pan: pan <= 7 ? -0.8 : 0.8 });
   }
+
   let orders: number[] = [];
-  for (let i = 0; i < num_orders; ++i) {
+  for (let i = 0; i < numOrders; ++i) {
     let order = data.byte(0x60 + i);
     if (order == 254) continue;
     if (order == 255) break;
     orders.push(order);
   }
+
   let instruments: Instrument[] = [];
-  for (let i = 0; i < num_instruments; ++i) {
-    let parapointer = data.word(0x60 + num_orders + i * 2);
+  for (let i = 0; i < numInstruments; ++i) {
+    let parapointer = data.word(0x60 + numOrders + i * 2);
     let instrument = ParseInstrument(data, parapointer * 16);
     if (instrument !== undefined) {
       instruments.push(instrument);
     }
   }
+
   let patterns: Pattern[] = [];
-  for (let i = 0; i < num_patterns; ++i) {
-    let parapointer = data.word(0x60 + num_orders + (num_instruments + i) * 2);
-    let pattern = ParsePattern(data, parapointer * 16);
+  for (let i = 0; i < numPatterns; ++i) {
+    let parapointer = data.word(0x60 + numOrders + (numInstruments + i) * 2);
+    let pattern = ParsePattern(data, parapointer * 16, channels);
     patterns.push(pattern);
   }
-  if (default_pan == 252) {
+
+  if (defaultPan == 252) {
     for (let [num, chan] of channels) {
-      let pan = data.word(
-        0x60 + num_orders + (num_instruments + num_patterns) * 2 + num
-      );
+      let pan =
+        data.byte(0x60 + numOrders + (numInstruments + numPatterns) * 2 + num) &
+        0x0f;
       chan.pan = pan / 7.5 - 1;
     }
   }
-  if ((master_volume & 0x80) == 0) {
-    channels.forEach(chn => chn.pan = 0);
+  if ((masterVolume & 0x80) == 0) {
+    channels.forEach((chn) => (chn.pan = 0));
   }
 
   return {
     name,
-    volume: global_volume / 64,
-    speed: initial_speed,
-    tempo: initial_tempo,
+    volume: globalVolume / 64,
+    speed,
+    tempo,
     channels,
     instruments,
     orders,
@@ -70,7 +75,11 @@ export function ParseS3M(s3m: Uint8Array): Song {
   };
 }
 
-function ParsePattern(data: Data, offset: number): Pattern {
+function ParsePattern(
+  data: Data,
+  offset: number,
+  channels: Map<number, Channel>
+): Pattern {
   let length = data.word(offset);
   let pattern: Pattern = [];
   let row: Row = [];
@@ -82,18 +91,20 @@ function ParsePattern(data: Data, offset: number): Pattern {
       continue;
     }
     let channel = c & 0x1f;
-    let note: number | undefined;
-    let instrument: number | undefined;
+    if (!channels.has(channel)) continue;
+    let note: Note | undefined;
     let volume: number | undefined;
-    let effect: number | undefined;
-    let info: number | undefined;
+    let effect: Effect | undefined;
     if (c & 0x20) {
       let n = data.byte(offset + i + 1);
       if (n == 254) {
-        note = n;
+        note = { off: true };
       } else if (n != 255) {
-        note = (n % 0xf0 >> 4) * 12 + (n & 0x0f);
-        instrument = data.byte(offset + i + 2);
+        note = {
+          off: false,
+          number: ((n & 0xf0) >> 4) * 12 + (n & 0x0f),
+          instrument: data.byte(offset + i + 2),
+        };
       }
       i += 2;
     }
@@ -102,11 +113,13 @@ function ParsePattern(data: Data, offset: number): Pattern {
       ++i;
     }
     if (c & 0x80) {
-      effect = data.byte(offset + i + 1);
-      info = data.byte(offset + i + 2);
+      effect = {
+        number: data.byte(offset + i + 1),
+        info: data.byte(offset + i + 2),
+      };
       i += 2;
     }
-    row.push({ channel, note, instrument, volume, effect, info });
+    row.push({ channel, note, volume, effect });
   }
   if (row.length != 0) {
     pattern.push(row);
@@ -118,10 +131,6 @@ function ParseInstrument(data: Data, offset: number): Instrument | undefined {
   let type = data.byte(0 + offset);
   let packed = data.byte(0x1e + offset);
   let mark = data.ascii(0x4c + offset, 4);
-  if (type == 0) return;
-  if (type != 1 || packed || mark != "SCRS") {
-    throw "Not a supported instrument";
-  }
   let ptr = (data.byte(0x0d + offset) << 16) + data.word(0x0e + offset);
   let length = data.word(0x10 + offset);
   let loopBegin = data.word(0x14 + offset);
@@ -133,10 +142,17 @@ function ParseInstrument(data: Data, offset: number): Instrument | undefined {
   }
   let middleCFreq = data.word(0x20 + offset);
   let name = data.asciiz(0x30 + offset, 28);
-  let byte_sample = data.byteArray(ptr * 16, length);
-  let sample = new Float32Array(byte_sample.length);
-  for (let i = 0; i < byte_sample.length; ++i) {
-    sample[i] = byte_sample[i] / 127.5 - 1;
+  let sample = new Float32Array(1);
+  if (type == 1) {
+    let byte_sample = data.byteArray(ptr * 16, length);
+    sample = new Float32Array(byte_sample.length);
+    for (let i = 0; i < byte_sample.length; ++i) {
+      sample[i] = byte_sample[i] / 127.5 - 1;
+    }
+} else if (type == 0) {
+    // do nothing
+  } else if (packed || mark != "SCRS") {
+    throw "Not a supported instrument";
   }
 
   return {
