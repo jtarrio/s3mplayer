@@ -320,7 +320,7 @@ class ChannelPlayer {
           break;
         case Effect.Break:
           let row =
-            ((cmd.effect.info! & 0xf0) >> 4) * 10 + (cmd.effect.info & 0x0f);
+            ((cmd.effect.info & 0xf0) >> 4) * 10 + (cmd.effect.info & 0x0f);
           this.player.breakPattern(row);
           break;
         case Effect.Slide:
@@ -357,14 +357,14 @@ class ChannelPlayer {
           if (cmd.effect.info) this.effectInfo.slideSpeed = cmd.effect.info;
           break;
         case Effect.Offset:
-          this.doEffectOffset(cmd.effect.info || 0);
+          this.doEffectOffset(cmd.effect.info);
           break;
         case Effect.Retrig:
           if (cmd.effect.info) this.effectInfo.retrig = cmd.effect.info;
           break;
         case Effect.SMulti:
-          this.effectInfo.currentSubeffect = (cmd.effect.info! & 0xf0) >> 4;
-          let subinfo = cmd.effect.info! & 0x0f;
+          this.effectInfo.currentSubeffect = (cmd.effect.info & 0xf0) >> 4;
+          let subinfo = cmd.effect.info & 0x0f;
           switch (this.effectInfo.currentSubeffect) {
             case Subeffect.NoteDelay:
               this.effectInfo.noteDelay = subinfo;
@@ -488,7 +488,7 @@ class ChannelPlayer {
     let state = ApplyStateChange(this.state, this.nextState);
     let tick = this.player.tick;
     let param = this.effectInfo.slideSpeed;
-    let gain = Math.round((state.volume || 0) * 64);
+    let gain = Math.round(state.volume * 64);
     if (tick == 0) {
       if ((param & 0x0f) == 0x0f) {
         gain += (param & 0xf0) >> 4;
@@ -510,7 +510,7 @@ class ChannelPlayer {
     let state = ApplyStateChange(this.state, this.nextState);
     let tick = this.player.tick;
     let param = this.effectInfo.portamentoSpeed!;
-    let period = state.period || 0;
+    let period = state.period;
     if (tick == 0) {
       if ((param & 0xf0) == 0xf0) {
         period += (param & 0x0f) * 4;
@@ -530,7 +530,7 @@ class ChannelPlayer {
     let state = ApplyStateChange(this.state, this.nextState);
     let tick = this.player.tick;
     let param = this.effectInfo.portamentoSpeed!;
-    let period = state.period || 0;
+    let period = state.period;
     if (tick == 0) {
       if ((param & 0xf0) == 0xf0) {
         period -= (param & 0x0f) * 4;
@@ -551,7 +551,7 @@ class ChannelPlayer {
     let tick = this.player.tick;
     let param = this.effectInfo.portamentoSpeed!;
     let target = this.effectInfo.periodToPortamento;
-    let period = state.period || 0;
+    let period = state.period;
     if (tick > 0) {
       if (target > period) {
         period = Math.min(target, period + param * 4);
@@ -568,11 +568,11 @@ class ChannelPlayer {
     let param = this.effectInfo.vibrato;
     let speed = (param & 0xf0) >> 4;
     let depth = param & 0x0f;
-    let position = state.vibratoPosition || 0;
+    let position = state.vibratoPosition;
     let delta = Math.floor(
       (kVibratoWave[position >= 0 ? position : 32 + position] * depth) / 128
     );
-    if (position < 0) delta *= -1;
+    if (state.vibratoPosition < 0) delta *= -1;
     if (tick > 0) {
       position += speed;
       if (position > 31) position -= 64;
@@ -590,10 +590,10 @@ class ChannelPlayer {
     if (note == 0) {
       this.nextState.periodDelta = 0;
     } else {
-      let index = FindPeriod(state.period || 0);
+      let index = FindPeriod(state.period);
       index += semitone[note - 1];
       index = Math.max(0, Math.min(kNotePeriods.length - 1, index));
-      this.nextState.periodDelta = kNotePeriods[index] - (state.period || 0);
+      this.nextState.periodDelta = kNotePeriods[index] - state.period;
     }
   }
 
@@ -605,7 +605,7 @@ class ChannelPlayer {
   private doEffectOffset(param: number) {
     let state = ApplyStateChange(this.state, this.nextState);
     let skip = param * 0x100;
-    this.nextState.offset = skip / (state.sample?.middleCFreq || 1);
+    this.nextState.offset = state.sample ? skip / state.sample?.middleCFreq : 0;
   }
 
   private doEffectRetrig() {
@@ -616,7 +616,7 @@ class ChannelPlayer {
     if (ticks % tick != 0) return;
     this.nextState.period = this.state.period;
     this.nextState.sample = this.state.sample;
-    let gain = Math.round((this.state.volume || 0) * 64);
+    let gain = Math.round(this.state.volume * 64);
     const slide_amounts = [
       0,
       -1,
