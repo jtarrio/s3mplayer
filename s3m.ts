@@ -13,6 +13,8 @@ export function ParseS3M(s3m: Uint8Array): Song {
   let numOrders = data.word(0x20);
   let numInstruments = data.word(0x22);
   let numPatterns = data.word(0x24);
+  let flags = data.word(0x26);
+  let cwtv = data.word(0x28);
   let globalVolume = data.byte(0x30);
   let speed = data.byte(0x31);
   let tempo = data.byte(0x32);
@@ -65,6 +67,8 @@ export function ParseS3M(s3m: Uint8Array): Song {
 
   return {
     name,
+    format: "S3M",
+    flags: { fastVolumeSlide: !!(flags & 0x40) || cwtv == 0x1300 },
     volume: globalVolume / 64,
     speed,
     tempo,

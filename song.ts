@@ -1,3 +1,22 @@
+export type Song = {
+  name: string;
+  format: Format;
+  flags: Flags;
+  volume: number;
+  speed: number;
+  tempo: number;
+  channels: Map<number, Channel>;
+  instruments: Instrument[];
+  orders: number[];
+  patterns: Pattern[];
+};
+
+export type Format = "S3M";
+
+export type Flags = {
+  fastVolumeSlide: boolean;
+}
+
 export type Channel = {
   name: string;
   /** 0 = left, 7 = middle, 15 = right */
@@ -14,14 +33,9 @@ export type Instrument = {
   sample: Float32Array;
 };
 
-export type Note =
-  | { off: true }
-  | { off: false; number: number; instrument: number };
+export type Pattern = Row[];
 
-export type Effect = {
-  number: number;
-  info: number;
-};
+export type Row = Command[];
 
 export type Command = {
   channel: number;
@@ -30,17 +44,11 @@ export type Command = {
   effect?: Effect;
 };
 
-export type Row = Command[];
+export type Note =
+  | { off: true }
+  | { off: false; number: number; instrument: number };
 
-export type Pattern = Row[];
-
-export type Song = {
-  name: string;
-  volume: number;
-  speed: number;
-  tempo: number;
-  channels: Map<number, Channel>;
-  instruments: Instrument[];
-  orders: number[];
-  patterns: Pattern[];
+export type Effect = {
+  number: number;
+  info: number;
 };

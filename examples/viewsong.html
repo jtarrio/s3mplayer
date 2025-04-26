@@ -4,8 +4,8 @@
     <script type="module">
       import { ParseS3M } from "../dist/s3m.js";
 
-      // fetch("./2nd_sk.s3m")
-      fetch("./2nd_pm.s3m")
+      fetch("./2nd_sk.s3m")
+      // fetch("./2nd_pm.s3m")
         // fetch("./tones.s3m")
         .then((response) => response.arrayBuffer())
         .then((s3m) => ParseS3M(new Uint8Array(s3m)))

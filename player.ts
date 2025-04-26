@@ -3,31 +3,29 @@ import { Channel, Command, Instrument, Song } from "./song";
 export class Player extends EventTarget {
   constructor(private song: Song) {
     super();
+    this.speed = song.speed;
     this.tempo = song.tempo;
-    this.songSpeed = song.speed;
     this.order = 0;
     this.row = 0;
-    this.currentTick = this.songSpeed;
+    this.currentTick = this.speed;
     this.jump = false;
     this.break = false;
     this.running = false;
-    this.millisPerTick = 2500 / song.tempo;
-    this.millisPlayed = 0;
+    this.timePlayed = 0;
     this.startTime = 0;
     this.channels = new Map();
     this.samples = [];
   }
 
+  public speed: number;
   private tempo: number;
-  private songSpeed: number;
   private order: number;
   private row: number;
   private currentTick: number;
   private jump: boolean;
   private break: boolean;
   private running: boolean;
-  private millisPerTick: number;
-  private millisPlayed: number;
+  private timePlayed: number;
   private startTime: number;
   private ctx?: AudioContext;
   private channels: Map<number, ChannelPlayer>;
@@ -35,8 +33,8 @@ export class Player extends EventTarget {
 
   play() {
     this.init();
-    this.startTime = this.ctx!.currentTime - this.millisPlayed / 1000;
-    this.updateTimings();
+    this.startTime = this.ctx!.currentTime - this.timePlayed;
+    this.currentTick = this.speed;
     this.running = true;
     this.doFrame();
   }
@@ -73,18 +71,6 @@ export class Player extends EventTarget {
     return this.currentTick;
   }
 
-  get msPerTick(): number {
-    return this.millisPerTick;
-  }
-
-  get speed(): number {
-    return this.songSpeed;
-  }
-  set speed(speed: number) {
-    this.songSpeed = speed;
-    this.updateTimings();
-  }
-
   addEventListener<K extends keyof PlayerEventMap>(
     type: K,
     listener: (this: Player, ev: PlayerEventMap[K]) => any,
@@ -113,24 +99,20 @@ export class Player extends EventTarget {
     this.ctx = ctx;
     this.startTime = ctx.currentTime;
     this.song.channels.forEach((channel, num) =>
-      this.channels.set(num, new ChannelPlayer(ctx, this, channel))
+      this.channels.set(
+        num,
+        new ChannelPlayer(ctx, this, this.song.flags.fastVolumeSlide, channel)
+      )
     );
     this.song.instruments.forEach((instrument) =>
       this.samples.push(sampleFromInstrument(ctx, instrument))
     );
   }
 
-  private updateTimings() {
-    this.millisPerTick = 2500 / this.tempo;
-  }
-
   private doFrame() {
-    while (
-      (this.ctx!.currentTime - this.startTime) * 1000 >
-      this.millisPlayed
-    ) {
+    while (this.ctx!.currentTime - this.startTime > this.timePlayed) {
       this.doTick();
-      this.millisPlayed += this.millisPerTick;
+      this.timePlayed += 2.5 / this.tempo;
     }
     if (this.running) requestAnimationFrame(() => this.doFrame());
   }
@@ -139,7 +121,7 @@ export class Player extends EventTarget {
     if (!this.running) return;
 
     this.currentTick++;
-    if (this.currentTick < this.songSpeed) {
+    if (this.currentTick < this.speed) {
       this.updateEffects();
       return;
     }
@@ -226,40 +208,36 @@ const kVibratoWave = [
 ];
 
 const kNotePeriods = [
+  // C0
   27392, 25856, 24384, 23040, 21696, 20480, 19328, 18240, 17216, 16256, 15360,
-  14496, 13696, 12928, 12192, 11520, 10848, 10240, 9664, 9120, 8608, 8128, 7680,
-  7248, 6848, 6464, 6096, 5760, 5424, 5120, 4832, 4560, 4304, 4064, 3840, 3624,
-  3424, 3232, 3048, 2880, 2712, 2560, 2416, 2280, 2152, 2032, 1920, 1812, 1712,
-  1616, 1524, 1440, 1356, 1280, 1208, 1140, 1076, 1016, 960, 906, 856, 808, 762,
-  720, 678, 640, 604, 570, 538, 508, 480, 453, 428, 404, 381, 360, 339, 320,
-  302, 285, 269, 254, 240, 226, 214, 202, 190, 180, 170, 160, 151, 143, 135,
-  127, 120, 113, 107, 101, 95, 90, 85, 80, 75, 71, 67, 63, 60, 56,
+  14496,
+  // C1
+  13696, 12928, 12192, 11520, 10848, 10240, 9664, 9120, 8608, 8128, 7680, 7248,
+  // C2
+  6848, 6464, 6096, 5760, 5424, 5120, 4832, 4560, 4304, 4064, 3840, 3624,
+  // C3
+  3424, 3232, 3048, 2880, 2712, 2560, 2416, 2280, 2152, 2032, 1920, 1812,
+  // C4
+  1712, 1616, 1524, 1440, 1356, 1280, 1208, 1140, 1076, 1016, 960, 906,
+  // C5
+  856, 808, 762, 720, 678, 640, 604, 570, 538, 508, 480, 453,
+  // C6
+  428, 404, 381, 360, 339, 320, 302, 285, 269, 254, 240, 226,
+  // C7
+  214, 202, 190, 180, 170, 160, 151, 143, 135, 127, 120, 113,
+  // C8
+  107, 101, 95, 90, 85, 80, 75, 71, 67, 63, 60, 56,
 ];
 
-function FromToPeriod(playbackRate: number) {
-  return 1712 / playbackRate;
-}
-
-function FindPeriod(period: number) {
-  let min = 0;
-  let max = kNotePeriods.length;
-  while (min < max) {
-    let mid = Math.floor((min + max) / 2);
-    let seen = kNotePeriods[mid];
-    if (period == seen) return mid;
-    if (period > seen) {
-      max = mid;
-    } else {
-      min = mid + 1;
-    }
-  }
-  return min;
-}
+const kC2Spd = 8363;
+const kC2Period = kNotePeriods[48];
+const kSysFrequency = kC2Spd * kC2Period;
 
 class ChannelPlayer {
   constructor(
     private ctx: AudioContext,
     private player: Player,
+    private fastVolumeSlide: boolean,
     channel: Channel
   ) {
     this.gain = ctx.createGain();
@@ -296,12 +274,19 @@ class ChannelPlayer {
       if (cmd.note.off) {
         this.nextState.period = 0;
       } else {
-        this.nextState.period = kNotePeriods[cmd.note.number];
-        if (cmd.note.instrument > 0) {
+        let middleCFreq = this.state.sample?.middleCFreq || kC2Spd;
+        if (
+          cmd.note.instrument > 0 &&
+          cmd.effect?.number != Effect.NotePortamento
+        ) {
           let sample = this.player.getSample(cmd.note.instrument - 1);
           this.nextState.sample = sample;
           this.nextState.volume = sample.volume;
+          middleCFreq = sample.middleCFreq;
         }
+        this.nextState.note = cmd.note.number;
+        this.nextState.period =
+          (kC2Spd * kNotePeriods[cmd.note.number]) / middleCFreq;
       }
     }
 
@@ -444,6 +429,7 @@ class ChannelPlayer {
     }
 
     if (this.nextState.period == 0) {
+      this.state.period = 0;
       if (this.sound) {
         this.sound.stop();
         this.sound = undefined;
@@ -452,16 +438,18 @@ class ChannelPlayer {
       this.state.period = this.nextState.period;
       this.state.periodDelta = this.nextState.periodDelta;
       if (this.sound) {
-        this.sound.playbackRate.value = FromToPeriod(
-          this.state.period + this.state.periodDelta
-        );
+        this.sound.playbackRate.value =
+          kSysFrequency /
+          (this.state.sample!.buffer.sampleRate *
+            (this.state.period + this.state.periodDelta));
       }
     } else if (this.nextState.periodDelta != this.state.periodDelta) {
       this.state.periodDelta = this.nextState.periodDelta;
       if (this.sound) {
-        this.sound.playbackRate.value = FromToPeriod(
-          this.state.period + this.state.periodDelta
-        );
+        this.sound.playbackRate.value =
+          kSysFrequency /
+          (this.state.sample!.buffer.sampleRate *
+            (this.state.period + this.state.periodDelta));
       }
     }
 
@@ -495,7 +483,8 @@ class ChannelPlayer {
       } else if ((param & 0xf0) == 0xf0) {
         gain -= param & 0x0f;
       }
-    } else {
+    }
+    if (tick > 0 || this.fastVolumeSlide) {
       if ((param & 0x0f) == 0) {
         gain += (param & 0xf0) >> 4;
       } else if ((param & 0xf0) == 0) {
@@ -509,7 +498,7 @@ class ChannelPlayer {
   private doEffectPitchDown() {
     let state = ApplyStateChange(this.state, this.nextState);
     let tick = this.player.tick;
-    let param = this.effectInfo.portamentoSpeed!;
+    let param = this.effectInfo.portamentoSpeed;
     let period = state.period;
     if (tick == 0) {
       if ((param & 0xf0) == 0xf0) {
@@ -529,7 +518,7 @@ class ChannelPlayer {
   private doEffectPitchUp() {
     let state = ApplyStateChange(this.state, this.nextState);
     let tick = this.player.tick;
-    let param = this.effectInfo.portamentoSpeed!;
+    let param = this.effectInfo.portamentoSpeed;
     let period = state.period;
     if (tick == 0) {
       if ((param & 0xf0) == 0xf0) {
@@ -549,7 +538,7 @@ class ChannelPlayer {
   private doEffectNotePortamento() {
     let state = ApplyStateChange(this.state, this.nextState);
     let tick = this.player.tick;
-    let param = this.effectInfo.portamentoSpeed!;
+    let param = this.effectInfo.portamentoSpeed;
     let target = this.effectInfo.periodToPortamento;
     let period = state.period;
     if (tick > 0) {
@@ -590,8 +579,7 @@ class ChannelPlayer {
     if (note == 0) {
       this.nextState.periodDelta = 0;
     } else {
-      let index = FindPeriod(state.period);
-      index += semitone[note - 1];
+      let index = state.note + semitone[note - 1];
       index = Math.max(0, Math.min(kNotePeriods.length - 1, index));
       this.nextState.periodDelta = kNotePeriods[index] - state.period;
     }
@@ -694,6 +682,7 @@ function sampleFromInstrument(
 
 type ChannelState = {
   sample: Sample | undefined;
+  note: number;
   period: number;
   volume: number;
   offset: number;
@@ -704,7 +693,8 @@ type ChannelState = {
 function NewChannelState(): ChannelState {
   return {
     sample: undefined,
-    period: 1712,
+    note: 48,
+    period: kNotePeriods[48],
     volume: 0,
     offset: 0,
     vibratoPosition: 0,
@@ -723,6 +713,7 @@ function EmptyNextState(): NextState {
 function ApplyStateChange(c: ChannelState, n: NextState): ChannelState {
   return {
     sample: n.sample === undefined ? c.sample : n.sample,
+    note: n.note === undefined ? c.note : n.note,
     period: n.period === undefined ? c.period : n.period,
     volume: n.volume === undefined ? c.volume : n.volume,
     offset: n.offset === undefined ? c.offset : n.offset,
