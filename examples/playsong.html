@@ -10,12 +10,12 @@
 
       // fetch("./2nd_sk.s3m")
       fetch("./2nd_pm.s3m")
-      // fetch("./tones.s3m")
+        // fetch("./tones.s3m")
         .then((response) => response.arrayBuffer())
         .then((s3m) => ParseS3M(new Uint8Array(s3m)))
         .then((song) => {
           the_song = new Player(song);
-          // the_song.order = 14;
+          the_song.order = 4;
           the_song.addEventListener("before-play", onBeforePlay);
         });
 
@@ -28,6 +28,7 @@
       };
 
       function onBeforePlay(e) {
+        console.log(e.detail.order, e.detail.row);
         document.getElementById("measure").textContent = `> ${JSON.stringify(
           e.detail
         )}`;

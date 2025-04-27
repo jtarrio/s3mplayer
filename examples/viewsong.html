@@ -4,8 +4,8 @@
     <script type="module">
       import { ParseS3M } from "../dist/s3m.js";
 
-      fetch("./2nd_sk.s3m")
-      // fetch("./2nd_pm.s3m")
+      // fetch("./2nd_sk.s3m")
+      fetch("./2nd_pm.s3m")
         // fetch("./tones.s3m")
         .then((response) => response.arrayBuffer())
         .then((s3m) => ParseS3M(new Uint8Array(s3m)))
@@ -42,7 +42,7 @@
         let ins = [];
         for (let i = 0; i < instruments.length; ++i) {
           let inst = instruments[i];
-          ins.push(`   ${i}:`);
+          ins.push(`   ${i + 1}:`);
           ins.push(`       Name: ${inst.name}`);
           ins.push(`       Volume: ${inst.volume}`);
           if (inst.looped) {
@@ -95,27 +95,33 @@
           for (let r = 0; r < rows.length; ++r) {
             let row = rows[r];
             let channels = "    ... .. .. ...".repeat(num_channels);
-            channels = String(Math.floor(r/10)) + String(Math.floor(r %10)) + channels.substr(2);
+            channels =
+              String(Math.floor(r / 10)) +
+              String(Math.floor(r % 10)) +
+              channels.substr(2);
             for (let c = 0; c < row.length; ++c) {
               let cmd = row[c];
               let chn = cmd.channel;
               let off = 17 * chn + 4;
-              if (cmd.note) {
-                let note = cmd.note.off
-                  ? "^^."
-                  : note_names[cmd.note.number % 12] +
-                    Math.floor(cmd.note.number / 12);
+              if (cmd.note !== undefined) {
+                let note =
+                  cmd.note == "off"
+                    ? "^^."
+                    : note_names[cmd.note % 12] + Math.floor(cmd.note / 12);
                 channels =
                   channels.substr(0, off) + note + channels.substr(off + 3);
-                if (!cmd.note.off) {
-                  channels =
-                    channels.substr(0, off + 4) +
-                    Math.floor(cmd.note.instrument / 10) +
-                    (cmd.note.instrument % 10) +
-                    channels.substr(off + 6);
-                }
               }
-              if (cmd.volume != null) {
+              if (cmd.instrument !== undefined) {
+                let instr =
+                  "" +
+                  Math.floor((cmd.instrument + 1) / 10) +
+                  ((cmd.instrument + 1) % 10);
+                channels =
+                  channels.substr(0, off + 4) +
+                  instr +
+                  channels.substr(off + 6);
+              }
+              if (cmd.volume !== undefined) {
                 let v = Math.floor(cmd.volume * 64);
                 channels =
                   channels.substr(0, off + 7) +

@@ -15,7 +15,7 @@ export type Format = "S3M";
 
 export type Flags = {
   fastVolumeSlide: boolean;
-}
+};
 
 export type Channel = {
   name: string;
@@ -39,14 +39,11 @@ export type Row = Command[];
 
 export type Command = {
   channel: number;
-  note?: Note;
+  note?: "off" | number;
+  instrument?: number;
   volume?: number;
   effect?: Effect;
 };
-
-export type Note =
-  | { off: true }
-  | { off: false; number: number; instrument: number };
 
 export type Effect = {
   number: number;

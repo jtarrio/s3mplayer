@@ -270,24 +270,32 @@ class ChannelPlayer {
   }
 
   doCommand(cmd: Command) {
-    if (cmd.note) {
-      if (cmd.note.off) {
-        this.nextState.period = 0;
-      } else {
-        let middleCFreq = this.state.sample?.middleCFreq || kC2Spd;
-        if (
-          cmd.note.instrument > 0 &&
-          cmd.effect?.number != Effect.NotePortamento
-        ) {
-          let sample = this.player.getSample(cmd.note.instrument - 1);
-          this.nextState.sample = sample;
-          this.nextState.volume = sample.volume;
-          middleCFreq = sample.middleCFreq;
-        }
-        this.nextState.note = cmd.note.number;
-        this.nextState.period =
-          (kC2Spd * kNotePeriods[cmd.note.number]) / middleCFreq;
-      }
+    let trigger = false;
+    let note = this.state.note;
+    let sample = this.state.sample;
+    let period = this.state.period;
+
+    if (cmd.instrument !== undefined) {
+      sample = this.player.getSample(cmd.instrument);
+      this.nextState.volume = sample?.volume || 64;
+      trigger = true;
+    }
+
+    if (cmd.note == "off") {
+      note = "off";
+      period = kC2Spd;
+      trigger = false;
+    } else if (cmd.note !== undefined) {
+      note = cmd.note;
+      let middleCFreq = sample?.middleCFreq || kC2Spd;
+      period = (kC2Spd * kNotePeriods[note]) / middleCFreq;
+      trigger = cmd.effect?.number != Effect.NotePortamento;
+    }
+
+    if (trigger) {
+      this.nextState.note = note;
+      this.nextState.period = period;
+      this.nextState.sample = sample;
     }
 
     if (cmd.volume !== undefined) {
@@ -323,8 +331,8 @@ class ChannelPlayer {
           this.doEffectPitchUp();
           break;
         case Effect.NotePortamento:
-          if (this.nextState.period !== undefined) {
-            this.effectInfo.periodToPortamento = this.nextState.period;
+          if (cmd.note !== undefined && cmd.note !== "off") {
+            this.effectInfo.periodToPortamento = period;
             this.nextState.period = undefined;
           }
           if (cmd.effect.info)
@@ -428,22 +436,21 @@ class ChannelPlayer {
       this.state.vibratoPosition = this.nextState.vibratoPosition;
     }
 
-    if (this.nextState.period == 0) {
-      this.state.period = 0;
+    if (this.nextState.note == "off") {
+      this.state.note = "off";
+      this.state.period = kC2Spd;
       if (this.sound) {
         this.sound.stop();
         this.sound = undefined;
       }
-    } else if (this.nextState.period !== undefined) {
-      this.state.period = this.nextState.period;
-      this.state.periodDelta = this.nextState.periodDelta;
-      if (this.sound) {
-        this.sound.playbackRate.value =
-          kSysFrequency /
-          (this.state.sample!.buffer.sampleRate *
-            (this.state.period + this.state.periodDelta));
-      }
-    } else if (this.nextState.periodDelta != this.state.periodDelta) {
+    } else if (
+      this.nextState.period !== undefined ||
+      this.nextState.periodDelta != this.state.periodDelta
+    ) {
+      if (this.nextState.note !== undefined)
+        this.state.note = this.nextState.note;
+      if (this.nextState.period !== undefined)
+        this.state.period = this.nextState.period;
       this.state.periodDelta = this.nextState.periodDelta;
       if (this.sound) {
         this.sound.playbackRate.value =
@@ -578,7 +585,7 @@ class ChannelPlayer {
     let note = tick % 3;
     if (note == 0) {
       this.nextState.periodDelta = 0;
-    } else {
+    } else if (state.note != "off") {
       let index = state.note + semitone[note - 1];
       index = Math.max(0, Math.min(kNotePeriods.length - 1, index));
       this.nextState.periodDelta = kNotePeriods[index] - state.period;
@@ -682,7 +689,7 @@ function sampleFromInstrument(
 
 type ChannelState = {
   sample: Sample | undefined;
-  note: number;
+  note: number | "off";
   period: number;
   volume: number;
   offset: number;
@@ -694,7 +701,7 @@ function NewChannelState(): ChannelState {
   return {
     sample: undefined,
     note: 48,
-    period: kNotePeriods[48],
+    period: kC2Spd,
     volume: 0,
     offset: 0,
     vibratoPosition: 0,

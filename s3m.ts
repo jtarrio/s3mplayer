@@ -1,4 +1,4 @@
-import { Channel, Effect, Instrument, Note, Pattern, Row, Song } from "./song";
+import { Channel, Effect, Instrument, Pattern, Row, Song } from "./song";
 
 export function ParseS3M(s3m: Uint8Array): Song {
   const data = new Data(s3m);
@@ -95,19 +95,18 @@ function ParsePattern(
       continue;
     }
     let channel = c & 0x1f;
-    let note: Note | undefined;
+    let note: "off" | number | undefined;
+    let instrument: number | undefined;
     let volume: number | undefined;
     let effect: Effect | undefined;
     if (c & 0x20) {
       let n = data.byte(offset + i + 1);
-      if (n == 254) {
-        note = { off: true };
-      } else if (n != 255) {
-        note = {
-          off: false,
-          number: ((n & 0xf0) >> 4) * 12 + (n & 0x0f),
-          instrument: data.byte(offset + i + 2),
-        };
+      let instNum = data.byte(offset + i + 2);
+      if (n != 255) {
+        note = n == 254 ? "off" : ((n & 0xf0) >> 4) * 12 + (n & 0x0f);
+      }
+      if (instNum != 0) {
+        instrument = instNum - 1;
       }
       i += 2;
     }
@@ -123,7 +122,7 @@ function ParsePattern(
       i += 2;
     }
     if (!channels.has(channel)) continue;
-    row.push({ channel, note, volume, effect });
+    row.push({ channel, note, instrument, volume, effect });
   }
   if (row.length != 0) {
     pattern.push(row);
