@@ -191,6 +191,7 @@ enum Effect {
   PitchUp = 6,
   NotePortamento = 7,
   Vibrato = 8,
+  Tremor = 9,
   Arpeggio = 10,
   VibratoSlide = 11,
   Offset = 15,
@@ -278,6 +279,7 @@ class ChannelPlayer {
     if (cmd.instrument !== undefined) {
       sample = this.player.getSample(cmd.instrument);
       this.nextState.volume = sample?.volume || 64;
+      this.nextState.mute = false;
       trigger = true;
     }
 
@@ -300,6 +302,7 @@ class ChannelPlayer {
 
     if (cmd.volume !== undefined) {
       this.nextState.volume = cmd.volume;
+      this.nextState.mute = false;
     }
 
     if (cmd.effect) {
@@ -342,6 +345,10 @@ class ChannelPlayer {
         case Effect.Vibrato:
           if (cmd.effect.info) this.effectInfo.vibrato = cmd.effect.info;
           this.doEffectVibrato();
+          break;
+        case Effect.Tremor:
+          this.effectInfo.tremor = cmd.effect.info;
+          this.doEffectTremor();
           break;
         case Effect.Arpeggio:
           if (cmd.effect.info) this.effectInfo.arpeggio = cmd.effect.info;
@@ -403,6 +410,9 @@ class ChannelPlayer {
       case Effect.Vibrato:
         this.doEffectVibrato();
         break;
+      case Effect.Tremor:
+        this.doEffectTremor();
+        break;
       case Effect.Arpeggio:
         this.doEffectArpeggio();
         break;
@@ -436,6 +446,10 @@ class ChannelPlayer {
       this.state.vibratoPosition = this.nextState.vibratoPosition;
     }
 
+    if (this.nextState.tremorPosition !== undefined) {
+      this.state.tremorPosition = this.nextState.tremorPosition;
+    }
+
     if (this.nextState.note == "off") {
       this.state.note = "off";
       this.state.period = kC2Spd;
@@ -460,10 +474,15 @@ class ChannelPlayer {
       }
     }
 
-    if (this.nextState.volume !== undefined) {
+    if (this.nextState.volume !== undefined)
       this.state.volume = this.nextState.volume;
-      this.gain.gain.value = this.state.volume;
-    }
+    if (this.nextState.mute !== undefined)
+      this.state.mute = this.nextState.mute;
+    if (
+      this.nextState.volume !== undefined ||
+      this.nextState.mute !== undefined
+    )
+      this.gain.gain.value = this.state.mute ? 0 : this.state.volume;
 
     this.nextState = EmptyNextState();
   }
@@ -500,6 +519,7 @@ class ChannelPlayer {
     }
     gain = Math.max(0, Math.min(64, gain));
     this.nextState.volume = gain / 64;
+    this.nextState.mute = false;
   }
 
   private doEffectPitchDown() {
@@ -577,6 +597,15 @@ class ChannelPlayer {
     this.nextState.periodDelta = delta * 4;
   }
 
+  private doEffectTremor() {
+    let state = ApplyStateChange(this.state, this.nextState);
+    let ticksOn = ((this.effectInfo.tremor & 0xf0) >> 4) + 1;
+    let ticksOff = (this.effectInfo.tremor & 0x0f) + 1;
+    let position = state.tremorPosition % (ticksOn + ticksOff);
+    this.nextState.mute = position >= ticksOn;
+    this.nextState.tremorPosition = position + 1;
+  }
+
   private doEffectArpeggio() {
     let state = ApplyStateChange(this.state, this.nextState);
     let tick = this.player.tick;
@@ -634,6 +663,7 @@ class ChannelPlayer {
     gain += amount;
     gain = Math.max(0, Math.min(64, gain));
     this.nextState.volume = gain / 64;
+    this.nextState.mute = false;
   }
 
   private doSubeffectNoteDelay() {
@@ -652,6 +682,7 @@ class EffectInfo {
   portamentoSpeed: number = 0;
   periodToPortamento: number = 0;
   vibrato: number = 0;
+  tremor: number = 0;
   arpeggio: number = 0;
   noteDelay: number = 0;
   stateChange?: NextState;
@@ -692,8 +723,10 @@ type ChannelState = {
   note: number | "off";
   period: number;
   volume: number;
+  mute: boolean;
   offset: number;
   vibratoPosition: number;
+  tremorPosition: number;
   periodDelta: number;
 };
 
@@ -703,8 +736,10 @@ function NewChannelState(): ChannelState {
     note: 48,
     period: kC2Spd,
     volume: 0,
+    mute: false,
     offset: 0,
     vibratoPosition: 0,
+    tremorPosition: 0,
     periodDelta: 0,
   };
 }
@@ -723,9 +758,12 @@ function ApplyStateChange(c: ChannelState, n: NextState): ChannelState {
     note: n.note === undefined ? c.note : n.note,
     period: n.period === undefined ? c.period : n.period,
     volume: n.volume === undefined ? c.volume : n.volume,
+    mute: n.mute === undefined ? c.mute : n.mute,
     offset: n.offset === undefined ? c.offset : n.offset,
     vibratoPosition:
       n.vibratoPosition === undefined ? c.vibratoPosition : n.vibratoPosition,
+    tremorPosition:
+      n.tremorPosition === undefined ? c.tremorPosition : n.tremorPosition,
     periodDelta: n.periodDelta,
   };
 }
