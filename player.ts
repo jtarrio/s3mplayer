@@ -194,6 +194,7 @@ enum Effect {
   Tremor = 9,
   Arpeggio = 10,
   VibratoSlide = 11,
+  PortaSlide = 12,
   Offset = 15,
   Retrig = 17,
   SMulti = 19,
@@ -279,7 +280,7 @@ class ChannelPlayer {
     if (cmd.instrument !== undefined) {
       sample = this.player.getSample(cmd.instrument);
       this.nextState.volume = sample?.volume || 64;
-      this.nextState.mute = false;
+      this.nextState.volumeDelta = 0;
       trigger = true;
     }
 
@@ -302,7 +303,7 @@ class ChannelPlayer {
 
     if (cmd.volume !== undefined) {
       this.nextState.volume = cmd.volume;
-      this.nextState.mute = false;
+      this.nextState.volumeDelta = 0;
     }
 
     if (cmd.effect) {
@@ -340,7 +341,6 @@ class ChannelPlayer {
           }
           if (cmd.effect.info)
             this.effectInfo.portamentoSpeed = cmd.effect.info;
-          this.doEffectNotePortamento();
           break;
         case Effect.Vibrato:
           if (cmd.effect.info) this.effectInfo.vibrato = cmd.effect.info;
@@ -354,6 +354,9 @@ class ChannelPlayer {
           if (cmd.effect.info) this.effectInfo.arpeggio = cmd.effect.info;
           break;
         case Effect.VibratoSlide:
+          if (cmd.effect.info) this.effectInfo.slideSpeed = cmd.effect.info;
+          break;
+        case Effect.PortaSlide:
           if (cmd.effect.info) this.effectInfo.slideSpeed = cmd.effect.info;
           break;
         case Effect.Offset:
@@ -419,6 +422,9 @@ class ChannelPlayer {
       case Effect.VibratoSlide:
         this.doEffectVibratoSlide();
         break;
+      case Effect.PortaSlide:
+        this.doEffectPortaSlide();
+        break;
       case Effect.Retrig:
         this.doEffectRetrig();
         break;
@@ -474,15 +480,18 @@ class ChannelPlayer {
       }
     }
 
-    if (this.nextState.volume !== undefined)
-      this.state.volume = this.nextState.volume;
-    if (this.nextState.mute !== undefined)
-      this.state.mute = this.nextState.mute;
     if (
       this.nextState.volume !== undefined ||
-      this.nextState.mute !== undefined
-    )
-      this.gain.gain.value = this.state.mute ? 0 : this.state.volume;
+      this.state.volumeDelta != this.nextState.volumeDelta
+    ) {
+      if (this.nextState.volume !== undefined)
+        this.state.volume = this.nextState.volume;
+      this.state.volumeDelta = this.nextState.volumeDelta;
+      this.gain.gain.value = Math.max(
+        0,
+        Math.min(this.state.volume + this.state.volumeDelta, 1)
+      );
+    }
 
     this.nextState = EmptyNextState();
   }
@@ -519,7 +528,7 @@ class ChannelPlayer {
     }
     gain = Math.max(0, Math.min(64, gain));
     this.nextState.volume = gain / 64;
-    this.nextState.mute = false;
+    this.nextState.volumeDelta = 0;
   }
 
   private doEffectPitchDown() {
@@ -602,7 +611,7 @@ class ChannelPlayer {
     let ticksOn = ((this.effectInfo.tremor & 0xf0) >> 4) + 1;
     let ticksOff = (this.effectInfo.tremor & 0x0f) + 1;
     let position = state.tremorPosition % (ticksOn + ticksOff);
-    this.nextState.mute = position >= ticksOn;
+    this.nextState.volumeDelta = position < ticksOn ? 0 : -1;
     this.nextState.tremorPosition = position + 1;
   }
 
@@ -623,6 +632,11 @@ class ChannelPlayer {
 
   private doEffectVibratoSlide() {
     this.doEffectVibrato();
+    this.doEffectSlide();
+  }
+
+  private doEffectPortaSlide() {
+    this.doEffectNotePortamento();
     this.doEffectSlide();
   }
 
@@ -663,7 +677,7 @@ class ChannelPlayer {
     gain += amount;
     gain = Math.max(0, Math.min(64, gain));
     this.nextState.volume = gain / 64;
-    this.nextState.mute = false;
+    this.nextState.volumeDelta = 0;
   }
 
   private doSubeffectNoteDelay() {
@@ -723,11 +737,11 @@ type ChannelState = {
   note: number | "off";
   period: number;
   volume: number;
-  mute: boolean;
   offset: number;
   vibratoPosition: number;
   tremorPosition: number;
   periodDelta: number;
+  volumeDelta: number;
 };
 
 function NewChannelState(): ChannelState {
@@ -736,18 +750,22 @@ function NewChannelState(): ChannelState {
     note: 48,
     period: kC2Spd,
     volume: 0,
-    mute: false,
     offset: 0,
     vibratoPosition: 0,
     tremorPosition: 0,
     periodDelta: 0,
+    volumeDelta: 0,
   };
 }
 
-type NextState = Partial<ChannelState> & { periodDelta: number };
+type NextState = Partial<ChannelState> & {
+  periodDelta: number;
+  volumeDelta: number;
+};
 
 function EmptyNextState(): NextState {
   return {
+    volumeDelta: 0,
     periodDelta: 0,
   };
 }
@@ -758,12 +776,12 @@ function ApplyStateChange(c: ChannelState, n: NextState): ChannelState {
     note: n.note === undefined ? c.note : n.note,
     period: n.period === undefined ? c.period : n.period,
     volume: n.volume === undefined ? c.volume : n.volume,
-    mute: n.mute === undefined ? c.mute : n.mute,
     offset: n.offset === undefined ? c.offset : n.offset,
     vibratoPosition:
       n.vibratoPosition === undefined ? c.vibratoPosition : n.vibratoPosition,
     tremorPosition:
       n.tremorPosition === undefined ? c.tremorPosition : n.tremorPosition,
     periodDelta: n.periodDelta,
+    volumeDelta: n.volumeDelta,
   };
 }
