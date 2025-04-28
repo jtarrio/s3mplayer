@@ -284,7 +284,7 @@ class ChannelPlayer {
     if (cmd.note == "off") {
       note = "off";
       period = kC2Spd;
-      trigger = false;
+      trigger = true;
     } else if (cmd.note !== undefined) {
       note = cmd.note;
       let middleCFreq = sample?.middleCFreq || kC2Spd;
