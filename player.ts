@@ -197,6 +197,7 @@ enum Effect {
   PortaSlide = 12,
   Offset = 15,
   Retrig = 17,
+  Tremolo = 18,
   SMulti = 19,
 }
 
@@ -205,8 +206,14 @@ enum Subeffect {
 }
 
 const kVibratoWave = [
-  0, 24, 49, 74, 97, 120, 141, 161, 180, 197, 212, 224, 235, 244, 250, 253, 255,
-  253, 250, 244, 235, 224, 212, 197, 180, 161, 141, 120, 97, 74, 49, 24,
+  // 0-7
+  0, 24, 49, 74, 97, 120, 141, 161,
+  // 8-15
+  180, 197, 212, 224, 235, 244, 250, 253,
+  // 16-23
+  255, 253, 250, 244, 235, 224, 212, 197,
+  // 24-31
+  180, 161, 141, 120, 97, 74, 49, 24,
 ];
 
 const kNotePeriods = [
@@ -365,6 +372,9 @@ class ChannelPlayer {
         case Effect.Retrig:
           if (cmd.effect.info) this.effectInfo.retrig = cmd.effect.info;
           break;
+        case Effect.Tremolo:
+          if (cmd.effect.info) this.effectInfo.tremolo = cmd.effect.info;
+          break;
         case Effect.SMulti:
           this.effectInfo.currentSubeffect = (cmd.effect.info & 0xf0) >> 4;
           let subinfo = cmd.effect.info & 0x0f;
@@ -427,6 +437,9 @@ class ChannelPlayer {
         break;
       case Effect.Retrig:
         this.doEffectRetrig();
+        break;
+      case Effect.Tremolo:
+        this.doEffectTremolo();
         break;
       case Effect.SMulti:
         switch (this.effectInfo.currentSubeffect) {
@@ -680,6 +693,25 @@ class ChannelPlayer {
     this.nextState.volumeDelta = 0;
   }
 
+  private doEffectTremolo() {
+    let state = ApplyStateChange(this.state, this.nextState);
+    let tick = this.player.tick;
+    let param = this.effectInfo.tremolo;
+    let speed = (param & 0xf0) >> 4;
+    let depth = param & 0x0f;
+    let position = state.tremoloPosition;
+    let delta = Math.floor(
+      (kVibratoWave[position >= 0 ? position : 32 + position] * depth) / 64
+    );
+    if (state.tremoloPosition < 0) delta *= -1;
+    if (tick > 0) {
+      position += speed;
+      if (position > 31) position -= 64;
+    }
+    this.nextState.tremoloPosition = position;
+    this.nextState.volumeDelta = delta / 64;
+  }
+
   private doSubeffectNoteDelay() {
     let tick = this.player.tick;
     let param = this.effectInfo.noteDelay;
@@ -701,6 +733,7 @@ class EffectInfo {
   noteDelay: number = 0;
   stateChange?: NextState;
   retrig: number = 0;
+  tremolo: number = 0;
 }
 
 type Sample = {
@@ -740,6 +773,7 @@ type ChannelState = {
   offset: number;
   vibratoPosition: number;
   tremorPosition: number;
+  tremoloPosition: number;
   periodDelta: number;
   volumeDelta: number;
 };
@@ -753,6 +787,7 @@ function NewChannelState(): ChannelState {
     offset: 0,
     vibratoPosition: 0,
     tremorPosition: 0,
+    tremoloPosition: 0,
     periodDelta: 0,
     volumeDelta: 0,
   };
@@ -781,6 +816,8 @@ function ApplyStateChange(c: ChannelState, n: NextState): ChannelState {
       n.vibratoPosition === undefined ? c.vibratoPosition : n.vibratoPosition,
     tremorPosition:
       n.tremorPosition === undefined ? c.tremorPosition : n.tremorPosition,
+    tremoloPosition:
+      n.tremoloPosition === undefined ? c.tremoloPosition : n.tremoloPosition,
     periodDelta: n.periodDelta,
     volumeDelta: n.volumeDelta,
   };
