@@ -18,7 +18,7 @@ export class Player extends EventTarget {
   }
 
   public speed: number;
-  private tempo: number;
+  public tempo: number;
   private order: number;
   private row: number;
   private currentTick: number;
@@ -199,6 +199,8 @@ enum Effect {
   Retrig = 17,
   Tremolo = 18,
   SMulti = 19,
+  Tempo = 20,
+  FineVibrato = 21,
 }
 
 enum Subeffect {
@@ -392,6 +394,13 @@ class ChannelPlayer {
               );
           }
           break;
+        case Effect.Tempo:
+          this.player.tempo = cmd.effect.info;
+          break;
+        case Effect.FineVibrato:
+          if (cmd.effect.info) this.effectInfo.vibrato = cmd.effect.info;
+          this.doEffectVibrato(true);
+          break;
         default:
           console.log(
             `Unknown effect: ${String.fromCharCode(64 + cmd.effect.number)} (${
@@ -447,6 +456,9 @@ class ChannelPlayer {
             this.doSubeffectNoteDelay();
             break;
         }
+        break;
+      case Effect.FineVibrato:
+        this.doEffectVibrato(true);
         break;
     }
     this.applyNextState();
@@ -600,7 +612,7 @@ class ChannelPlayer {
     this.nextState.period = period;
   }
 
-  private doEffectVibrato() {
+  private doEffectVibrato(fine?: boolean) {
     let state = ApplyStateChange(this.state, this.nextState);
     let tick = this.player.tick;
     let param = this.effectInfo.vibrato;
@@ -616,7 +628,7 @@ class ChannelPlayer {
       if (position > 31) position -= 64;
     }
     this.nextState.vibratoPosition = position;
-    this.nextState.periodDelta = delta * 4;
+    this.nextState.periodDelta = fine ? delta : delta * 4;
   }
 
   private doEffectTremor() {
