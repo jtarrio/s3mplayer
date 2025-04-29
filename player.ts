@@ -1,7 +1,12 @@
 import { Channel, Command, Instrument, Song } from "./song";
 
+export type Options = {
+  context?: BaseAudioContext;
+  destination?: AudioNode;
+};
+
 export class Player extends EventTarget {
-  constructor(private song: Song) {
+  constructor(private song: Song, options?: Options) {
     super();
     this.speed = song.speed;
     this.tempo = song.tempo;
@@ -13,6 +18,9 @@ export class Player extends EventTarget {
     this.running = false;
     this.timePlayed = 0;
     this.startTime = 0;
+    this.ctx = options?.destination?.context || options?.context;
+    this.destination = options?.destination;
+    this.globalVolume;
     this.channels = new Map();
     this.samples = [];
   }
@@ -27,7 +35,9 @@ export class Player extends EventTarget {
   private running: boolean;
   private timePlayed: number;
   private startTime: number;
-  private ctx?: AudioContext;
+  private ctx?: BaseAudioContext;
+  private destination?: AudioNode;
+  private globalVolume?: GainNode;
   private channels: Map<number, ChannelPlayer>;
   private samples: Sample[];
 
@@ -71,6 +81,18 @@ export class Player extends EventTarget {
     return this.currentTick;
   }
 
+  get volume(): number {
+    return this.globalVolume ? this.globalVolume.gain.value : this.song.volume;
+  }
+
+  set volume(volume: number) {
+    if (this.globalVolume) {
+      this.globalVolume.gain.value = volume;
+    } else {
+      this.song.volume = volume;
+    }
+  }
+
   addEventListener<K extends keyof PlayerEventMap>(
     type: K,
     listener: (this: Player, ev: PlayerEventMap[K]) => any,
@@ -94,18 +116,26 @@ export class Player extends EventTarget {
   }
 
   private init() {
-    if (this.ctx) return;
-    let ctx = new AudioContext();
-    this.ctx = ctx;
-    this.startTime = ctx.currentTime;
+    if (this.globalVolume) return;
+    if (!this.ctx) this.ctx = new AudioContext();
+    if (!this.destination) this.destination = this.ctx.destination;
+    this.globalVolume = this.ctx!.createGain();
+    this.globalVolume.gain.value = this.song.volume;
+    this.globalVolume.connect(this.destination);
+    this.startTime = this.ctx.currentTime;
     this.song.channels.forEach((channel, num) =>
       this.channels.set(
         num,
-        new ChannelPlayer(ctx, this, this.song.flags.fastVolumeSlide, channel)
+        new ChannelPlayer(
+          this.destination!,
+          this,
+          this.song.flags.fastVolumeSlide,
+          channel
+        )
       )
     );
     this.song.instruments.forEach((instrument) =>
-      this.samples.push(sampleFromInstrument(ctx, instrument))
+      this.samples.push(sampleFromInstrument(this.ctx!, instrument))
     );
   }
 
@@ -201,6 +231,7 @@ enum Effect {
   SMulti = 19,
   Tempo = 20,
   FineVibrato = 21,
+  Volume = 22,
 }
 
 enum Subeffect {
@@ -246,13 +277,14 @@ const kSysFrequency = kC2Spd * kC2Period;
 
 class ChannelPlayer {
   constructor(
-    private ctx: AudioContext,
+    destination: AudioNode,
     private player: Player,
     private fastVolumeSlide: boolean,
     channel: Channel
   ) {
-    this.gain = ctx.createGain();
-    this.panner = ctx.createStereoPanner();
+    this.ctx = destination.context;
+    this.gain = this.ctx.createGain();
+    this.panner = this.ctx.createStereoPanner();
     this.effectInfo = new EffectInfo();
     this.state = NewChannelState();
     this.nextState = EmptyNextState();
@@ -260,9 +292,10 @@ class ChannelPlayer {
     this.gain.gain.value = 1;
     this.panner.pan.value = channel.pan;
     this.gain.connect(this.panner);
-    this.panner.connect(this.ctx.destination);
+    this.panner.connect(destination);
   }
 
+  private ctx: BaseAudioContext;
   private gain: GainNode;
   private panner: StereoPannerNode;
   private sound?: AudioBufferSourceNode;
@@ -400,6 +433,9 @@ class ChannelPlayer {
         case Effect.FineVibrato:
           if (cmd.effect.info) this.effectInfo.vibrato = cmd.effect.info;
           this.doEffectVibrato(true);
+          break;
+        case Effect.Volume:
+          this.player.volume = Math.max(Math.min(cmd.effect.info / 64), 1);
           break;
         default:
           console.log(
@@ -758,7 +794,7 @@ type Sample = {
 };
 
 function sampleFromInstrument(
-  ctx: AudioContext,
+  ctx: BaseAudioContext,
   instrument: Instrument
 ): Sample {
   let buffer = ctx.createBuffer(
