@@ -55,10 +55,13 @@ export function ParseS3M(s3m: Uint8Array): Song {
 
   if (defaultPan == 252) {
     for (let [num, chan] of channels) {
-      let pan =
-        data.byte(0x60 + numOrders + (numInstruments + numPatterns) * 2 + num) &
-        0x0f;
-      chan.pan = pan / 7.5 - 1;
+      let pan = data.byte(
+        0x60 + numOrders + (numInstruments + numPatterns) * 2 + num
+      );
+      if ((pan & 0x20) != 0) {
+        pan = pan & 0x0f;
+        chan.pan = pan / 7.5 - 1;
+      }
     }
   }
   if ((masterVolume & 0x80) == 0) {

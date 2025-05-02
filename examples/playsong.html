@@ -2,41 +2,62 @@
 <html>
   <body>
     <script type="module">
+      import { songs } from "./songs.js";
       import { ParseS3M } from "../dist/s3m.js";
       import { Player } from "../dist/player.js";
 
-      let stop = true;
-      let the_song;
+      window.addEventListener("load", main);
 
-      // fetch("./2nd_sk.s3m")
-      // fetch("./2nd_pm.s3m")
-        fetch("./tones.s3m")
-        .then((response) => response.arrayBuffer())
-        .then((s3m) => ParseS3M(new Uint8Array(s3m)))
-        .then((song) => {
-          the_song = new Player(song);
-          // the_song.order = 4;
-          the_song.addEventListener("before-play", onBeforePlay);
+      async function main() {
+        let elem = {
+          songs: document.getElementById("songs"),
+          playbtn: document.getElementById("playbtn"),
+          stopbtn: document.getElementById("stopbtn"),
+          resetbtn: document.getElementById("resetbtn"),
+          measure: document.getElementById("measure"),
+        };
+
+        for (let song of songs) {
+          let opt = document.createElement("option");
+          opt.value = song;
+          opt.textContent = song;
+          elem.songs.appendChild(opt);
+        }
+
+        let theSong = await loadSong(elem.songs.value);
+        theSong.addEventListener("before-play", (e) => {
+          console.log(e.detail.order, e.detail.row);
+          elem.measure.textContent = `Order: ${e.detail.order}, Row: ${e.detail.row}`;
         });
 
-      document.getElementById("playbtn").onclick = () => {
-        the_song.play();
-      };
+        elem.songs.addEventListener("change", async (e) => {
+          theSong = await loadSong(e.target.value);
+          theSong.addEventListener("before-play", (e) => {
+            console.log(e.detail.order, e.detail.row);
+            elem.measure.textContent = `Order: ${e.detail.order}, Row: ${e.detail.row}`;
+          });
+        });
 
-      document.getElementById("stopbtn").onclick = () => {
-        the_song.stop();
-      };
+        elem.playbtn.addEventListener("click", () => theSong.play());
+        elem.stopbtn.addEventListener("click", () => theSong.stop());
+        elem.resetbtn.addEventListener("click", () => {
+          theSong.order = 0;
+          theSong.row = 0;
+        });
+      }
 
-      function onBeforePlay(e) {
-        console.log(e.detail.order, e.detail.row);
-        document.getElementById("measure").textContent = `> ${JSON.stringify(
-          e.detail
-        )}`;
+      async function loadSong(songName) {
+        let response = await fetch(songName);
+        let s3m = await response.arrayBuffer();
+        let song = ParseS3M(new Uint8Array(s3m));
+        return new Player(song);
       }
     </script>
 
+    <select id="songs"></select>
     <input id="playbtn" type="button" value="Play" />
     <input id="stopbtn" type="button" value="Stop" />
+    <input id="resetbtn" type="button" value="Reset" />
     <div id="measure"></div>
   </body>
 </html>

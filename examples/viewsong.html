@@ -2,19 +2,42 @@
 <html>
   <body>
     <script type="module">
+      import { songs } from "./songs.js";
       import { ParseS3M } from "../dist/s3m.js";
 
-      // fetch("./2nd_sk.s3m")
-      // fetch("./2nd_pm.s3m")
-        fetch("./tones.s3m")
-        .then((response) => response.arrayBuffer())
-        .then((s3m) => ParseS3M(new Uint8Array(s3m)))
-        .then((song) => ViewSong(song));
+      window.addEventListener("load", main);
+
+      async function main() {
+        let elem = {
+          songs: document.getElementById("songs"),
+          display: document.getElementById("display"),
+        };
+
+        for (let song of songs) {
+          let opt = document.createElement("option");
+          opt.value = song;
+          opt.textContent = song;
+          elem.songs.appendChild(opt);
+        }
+
+        await loadSong(elem.songs.value, elem.display);
+        elem.songs.addEventListener("change", (e) => {
+          loadSong(e.target.value, elem.display);
+        });
+      }
+
+      async function loadSong(songName, elem) {
+        let response = await fetch(songName);
+        let s3m = await response.arrayBuffer();
+        let song = ParseS3M(new Uint8Array(s3m));
+        ViewSong(song, elem);
+      }
 
       /**
        * @param {Song} song
+       * @param {HTMLElement} elem
        */
-      function ViewSong(song) {
+      function ViewSong(song, elem) {
         let text = [`Song: ${song.name}`];
         text.push(`Volume: ${song.volume}`);
         text.push(`Speed/Tempo: ${song.speed}/${song.tempo}`);
@@ -30,9 +53,7 @@
         text.push("Patterns:");
         text.push(ViewPatterns(song.patterns, song.channels));
 
-        let pre = document.createElement("pre");
-        document.body.appendChild(pre);
-        pre.innerText = text.join("\n");
+        elem.innerText = text.join("\n");
       }
 
       /**
@@ -151,5 +172,8 @@
         return pats.join("\n");
       }
     </script>
+
+    <select id="songs"></select>
+    <pre id="display"></pre>
   </body>
 </html>

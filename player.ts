@@ -323,7 +323,6 @@ class ChannelPlayer {
       sample = this.player.getSample(cmd.instrument);
       this.nextState.volume = sample?.volume || 64;
       this.nextState.volumeDelta = 0;
-      trigger = true;
     }
 
     if (cmd.note == "off") {
