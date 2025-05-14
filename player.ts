@@ -347,7 +347,7 @@ class ChannelPlayer {
       this.nextState.volumeDelta = 0;
     }
 
-    if (cmd.effect) {
+    if (cmd.effect && cmd.effect.number != 0) {
       this.effectInfo.currentEffect = cmd.effect.number;
       switch (cmd.effect.number) {
         case Effect.Speed:
