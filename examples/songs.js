@@ -6,5 +6,9 @@ export const songs = [
   "tests/1_EF_B.S3M",
   "tests/1_EF_C.S3M",
   "tests/1_EF_D.S3M",
+  "tests/1_EF_E.S3M",
+  "tests/1_EF_F.S3M",
+  "tests/1_EF_G.S3M",
+  "tests/1_EF_H.S3M",
   "tests/EMPTY.S3M",
 ];
