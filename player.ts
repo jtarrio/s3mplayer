@@ -384,7 +384,12 @@ class ChannelPlayer {
             this.effectInfo.portamentoSpeed = cmd.effect.info;
           break;
         case Effect.Vibrato:
-          if (cmd.effect.info) this.effectInfo.vibrato = cmd.effect.info;
+          if (cmd.effect.info & 0xf0) {
+            this.effectInfo.vibrato = cmd.effect.info;
+          } else if (cmd.effect.info & 0x0f) {
+            this.effectInfo.vibrato &= 0xf0;
+            this.effectInfo.vibrato |= cmd.effect.info & 0x0f;
+          }
           this.doEffectVibrato();
           break;
         case Effect.Tremor:
