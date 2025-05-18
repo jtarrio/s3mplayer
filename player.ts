@@ -393,7 +393,7 @@ class ChannelPlayer {
           this.doEffectVibrato();
           break;
         case Effect.Tremor:
-          this.effectInfo.tremor = cmd.effect.info;
+          if (cmd.effect.info) this.effectInfo.tremor = cmd.effect.info;
           this.doEffectTremor();
           break;
         case Effect.Arpeggio:
