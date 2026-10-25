@@ -30,7 +30,7 @@ export type Instrument = {
   loopBegin: number;
   loopEnd: number;
   middleCFreq: number;
-  sample: Float32Array;
+  sample: Float32Array<ArrayBuffer>;
 };
 
 export type Pattern = Row[];
