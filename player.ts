@@ -3,6 +3,7 @@ import { Channel, Command, Instrument, Song } from "./song";
 export type Options = {
   context?: BaseAudioContext;
   destination?: AudioNode;
+  lookahead?: number;
 };
 
 export class Player extends EventTarget {
@@ -18,23 +19,25 @@ export class Player extends EventTarget {
     this.running = false;
     this.timePlayed = 0;
     this.startTime = 0;
+    this.lookahead = options?.lookahead ?? 0.1;
     this.ctx = options?.destination?.context || options?.context;
     this.destination = options?.destination;
-    this.globalVolume;
     this.channels = new Map();
     this.samples = [];
   }
 
   public speed: number;
   public tempo: number;
-  private order: number;
-  private row: number;
+  public order: number;
+  public row: number;
+  public lookahead: number;
   private currentTick: number;
   private jump: boolean;
   private break: boolean;
   private running: boolean;
   private timePlayed: number;
   private startTime: number;
+  private timerId?: number;
   private ctx?: BaseAudioContext;
   private destination?: AudioNode;
   private globalVolume?: GainNode;
@@ -43,15 +46,33 @@ export class Player extends EventTarget {
 
   play() {
     this.init();
+    if (this.ctx && "resume" in this.ctx && typeof (this.ctx as any).resume === "function") {
+      (this.ctx as any).resume();
+    }
     this.startTime = this.ctx!.currentTime - this.timePlayed;
     this.currentTick = this.speed;
     this.running = true;
-    this.doFrame();
+    this.schedule();
   }
 
   stop() {
     this.running = false;
+    if (this.timerId !== undefined) {
+      clearTimeout(this.timerId);
+      this.timerId = undefined;
+    }
+    if (this.ctx) {
+      this.timePlayed = Math.max(0, this.ctx.currentTime - this.startTime);
+    }
     this.channels.forEach((c) => c.stop());
+  }
+
+  reset() {
+    this.stop();
+    this.order = 0;
+    this.row = 0;
+    this.currentTick = this.speed;
+    this.timePlayed = 0;
   }
 
   getSample(num: number): Sample {
@@ -86,8 +107,19 @@ export class Player extends EventTarget {
   }
 
   set volume(volume: number) {
+    this.setVolume(volume);
+  }
+
+  setVolume(volume: number, targetTime?: number) {
     if (this.globalVolume) {
-      this.globalVolume.gain.value = volume;
+      if (targetTime !== undefined && this.ctx) {
+        this.globalVolume.gain.setValueAtTime(
+          volume,
+          Math.max(targetTime, this.ctx.currentTime)
+        );
+      } else {
+        this.globalVolume.gain.value = volume;
+      }
     } else {
       this.song.volume = volume;
     }
@@ -139,20 +171,33 @@ export class Player extends EventTarget {
     );
   }
 
-  private doFrame() {
-    while (this.ctx!.currentTime - this.startTime > this.timePlayed) {
-      this.doTick();
+  private schedule() {
+    if (!this.running) return;
+
+    if (this.ctx!.currentTime - this.startTime > this.timePlayed + 0.25) {
+      this.startTime = this.ctx!.currentTime - this.timePlayed;
+    }
+
+    while (
+      this.running &&
+      this.timePlayed < this.ctx!.currentTime - this.startTime + this.lookahead
+    ) {
+      const targetTime = this.startTime + this.timePlayed;
+      this.doTick(targetTime);
       this.timePlayed += 2.5 / this.tempo;
     }
-    if (this.running) requestAnimationFrame(() => this.doFrame());
+
+    if (this.running) {
+      this.timerId = setTimeout(() => this.schedule(), 25);
+    }
   }
 
-  private doTick() {
+  private doTick(targetTime: number) {
     if (!this.running) return;
 
     this.currentTick++;
     if (this.currentTick < this.speed) {
-      this.updateEffects();
+      this.updateEffects(targetTime);
       return;
     }
     if (!this.running) {
@@ -177,21 +222,21 @@ export class Player extends EventTarget {
     this.break = false;
     this.jump = false;
     this.currentTick = 0;
-    this.doRow();
+    this.doRow(targetTime);
     this.row++;
   }
 
-  private doRow() {
+  private doRow(targetTime: number) {
     let pattern = this.song.patterns[this.song.orders[this.order]];
     let row = pattern[this.row];
     this.channels.forEach((chn) => chn.doRow());
     for (const cmd of row) {
-      this.channels.get(cmd.channel)!.doCommand(cmd);
+      this.channels.get(cmd.channel)!.doCommand(cmd, targetTime);
     }
   }
 
-  private updateEffects() {
-    this.channels.forEach((chn) => chn.updateEffects());
+  private updateEffects(targetTime: number) {
+    this.channels.forEach((chn) => chn.updateEffects(targetTime));
   }
 }
 
@@ -304,16 +349,22 @@ class ChannelPlayer {
   private nextState: NextState;
 
   stop() {
-    if (!this.sound) return;
-    this.sound.stop();
-    this.sound = undefined;
+    if (this.sound) {
+      try {
+        this.sound.stop();
+      } catch (e) {}
+      this.sound = undefined;
+    }
+    if (this.ctx) {
+      this.gain.gain.cancelScheduledValues(this.ctx.currentTime);
+    }
   }
 
   doRow() {
     this.effectInfo.currentEffect = undefined;
   }
 
-  doCommand(cmd: Command) {
+  doCommand(cmd: Command, targetTime: number) {
     let trigger = false;
     let note = this.state.note;
     let sample = this.state.sample;
@@ -439,7 +490,10 @@ class ChannelPlayer {
           this.doEffectVibrato(true);
           break;
         case Effect.Volume:
-          this.player.volume = Math.max(Math.min(cmd.effect.info / 64), 1);
+          this.player.setVolume(
+            Math.max(0, Math.min(1, cmd.effect.info / 64)),
+            targetTime
+          );
           break;
         default:
           console.log(
@@ -450,10 +504,10 @@ class ChannelPlayer {
       }
     }
 
-    this.applyNextState();
+    this.applyNextState(targetTime);
   }
 
-  updateEffects() {
+  updateEffects(targetTime: number) {
     switch (this.effectInfo.currentEffect) {
       case undefined:
         break;
@@ -501,16 +555,22 @@ class ChannelPlayer {
         this.doEffectVibrato(true);
         break;
     }
-    this.applyNextState();
+    this.applyNextState(targetTime);
   }
 
-  private applyNextState() {
+  private applyNextState(targetTime: number) {
+    const time = Math.max(targetTime, this.ctx.currentTime);
+
     if (this.nextState.sample !== undefined) {
       this.state.sample = this.nextState.sample;
-      if (this.sound) this.sound.stop();
+      if (this.sound) {
+        try {
+          this.sound.stop(time);
+        } catch (e) {}
+      }
       this.sound = this.makeNewSound(this.state.sample);
       this.sound.connect(this.gain);
-      this.sound.start(0, this.nextState.offset || 0);
+      this.sound.start(time, this.nextState.offset || 0);
     }
 
     if (this.nextState.vibratoPosition !== undefined) {
@@ -525,7 +585,9 @@ class ChannelPlayer {
       this.state.note = "off";
       this.state.period = kC2Spd;
       if (this.sound) {
-        this.sound.stop();
+        try {
+          this.sound.stop(time);
+        } catch (e) {}
         this.sound = undefined;
       }
     } else if (
@@ -538,10 +600,11 @@ class ChannelPlayer {
         this.state.period = this.nextState.period;
       this.state.periodDelta = this.nextState.periodDelta;
       if (this.sound) {
-        this.sound.playbackRate.value =
+        const rate =
           kSysFrequency /
           (this.state.sample!.buffer.sampleRate *
             (this.state.period + this.state.periodDelta));
+        this.sound.playbackRate.setValueAtTime(rate, time);
       }
     }
 
@@ -552,10 +615,11 @@ class ChannelPlayer {
       if (this.nextState.volume !== undefined)
         this.state.volume = this.nextState.volume;
       this.state.volumeDelta = this.nextState.volumeDelta;
-      this.gain.gain.value = Math.max(
+      const gainVal = Math.max(
         0,
         Math.min(this.state.volume + this.state.volumeDelta, 1)
       );
+      this.gain.gain.setValueAtTime(gainVal, time);
     }
 
     this.nextState = EmptyNextState();
