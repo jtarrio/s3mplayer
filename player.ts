@@ -19,6 +19,7 @@ export class Player extends EventTarget {
     this.running = false;
     this.timePlayed = 0;
     this.startTime = 0;
+    this.patternDelay = 0;
     this.lookahead = options?.lookahead ?? 0.1;
     this.ctx = options?.destination?.context || options?.context;
     this.destination = options?.destination;
@@ -37,6 +38,7 @@ export class Player extends EventTarget {
   private running: boolean;
   private timePlayed: number;
   private startTime: number;
+  private patternDelay: number;
   private timerId?: number;
   private ctx?: BaseAudioContext;
   private destination?: AudioNode;
@@ -72,6 +74,7 @@ export class Player extends EventTarget {
     this.order = 0;
     this.row = 0;
     this.currentTick = this.speed;
+    this.patternDelay = 0;
     this.timePlayed = 0;
   }
 
@@ -88,9 +91,20 @@ export class Player extends EventTarget {
     this.jump = true;
   }
 
+  jumpToRow(row: number) {
+    this.row = row - 1;
+    this.jump = true;
+  }
+
+  setPatternDelay(rows: number) {
+    if (this.patternDelay == 0) {
+      this.patternDelay = rows;
+    }
+  }
+
   breakPattern(row: number) {
     this.row = row - 1;
-    if (row > 62) this.row = -1;
+    if (row > 63) this.row = -1;
     if (!this.break && !this.jump) {
       ++this.order;
       if (this.order >= this.song.orders.length) this.order = 0;
@@ -204,6 +218,12 @@ export class Player extends EventTarget {
       this.stop();
       return;
     }
+    if (this.patternDelay > 0) {
+      this.patternDelay--;
+      this.currentTick = 0;
+      this.updateEffects(targetTime);
+      return;
+    }
     if (this.row >= 64) {
       this.row = 0;
       this.order++;
@@ -277,10 +297,22 @@ enum Effect {
   Tempo = 20,
   FineVibrato = 21,
   Volume = 22,
+  Pan = 24,
 }
 
 enum Subeffect {
+  SetFilter = 0x00,
+  Glissando = 0x01,
+  SetFinetune = 0x02,
+  VibratoWaveform = 0x03,
+  TremoloWaveform = 0x04,
+  Pan = 0x08,
+  StereoControl = 0x0a,
+  PatternLoop = 0x0b,
+  NoteCut = 0x0c,
   NoteDelay = 0x0d,
+  PatternDelay = 0x0e,
+  FunkRepeat = 0x0f,
 }
 
 const kVibratoWave = [
@@ -384,13 +416,22 @@ class ChannelPlayer {
       note = cmd.note;
       let middleCFreq = sample?.middleCFreq || kC2Spd;
       period = (kC2Spd * kNotePeriods[note]) / middleCFreq;
-      trigger = cmd.effect?.number != Effect.NotePortamento;
+      trigger =
+        cmd.effect?.number != Effect.NotePortamento &&
+        cmd.effect?.number != Effect.PortaSlide;
     }
 
     if (trigger) {
       this.nextState.note = note;
       this.nextState.period = period;
       this.nextState.sample = sample;
+      if ((this.effectInfo.vibratoWaveform & 4) == 0) {
+        this.nextState.vibratoPosition = 0;
+      }
+      if ((this.effectInfo.tremoloWaveform & 4) == 0) {
+        this.nextState.tremoloPosition = 0;
+      }
+      this.nextState.tremorPosition = 0;
     }
 
     if (cmd.volume !== undefined) {
@@ -402,7 +443,7 @@ class ChannelPlayer {
       this.effectInfo.currentEffect = cmd.effect.number;
       switch (cmd.effect.number) {
         case Effect.Speed:
-          this.player.speed = cmd.effect.info;
+          if (cmd.effect.info > 0) this.player.speed = cmd.effect.info;
           break;
         case Effect.Jump:
           this.player.jumpToOrder(cmd.effect.info);
@@ -432,15 +473,17 @@ class ChannelPlayer {
             this.nextState.period = undefined;
           }
           if (cmd.effect.info)
-            this.effectInfo.portamentoSpeed = cmd.effect.info;
+            this.effectInfo.tonePortamentoSpeed = cmd.effect.info;
           break;
         case Effect.Vibrato:
-          if (cmd.effect.info & 0xf0) {
-            this.effectInfo.vibrato = cmd.effect.info;
-          } else if (cmd.effect.info & 0x0f) {
-            this.effectInfo.vibrato &= 0xf0;
-            this.effectInfo.vibrato |= cmd.effect.info & 0x0f;
-          }
+          let vibSpeed = (cmd.effect.info & 0xf0) >> 4;
+          let vibDepth = cmd.effect.info & 0x0f;
+          if (vibSpeed)
+            this.effectInfo.vibrato =
+              (this.effectInfo.vibrato & 0x0f) | (vibSpeed << 4);
+          if (vibDepth)
+            this.effectInfo.vibrato =
+              (this.effectInfo.vibrato & 0xf0) | vibDepth;
           this.doEffectVibrato();
           break;
         case Effect.Tremor:
@@ -454,45 +497,127 @@ class ChannelPlayer {
           if (cmd.effect.info) this.effectInfo.slideSpeed = cmd.effect.info;
           break;
         case Effect.PortaSlide:
+          if (cmd.note !== undefined && cmd.note !== "off") {
+            this.effectInfo.periodToPortamento = period;
+            this.nextState.period = undefined;
+          }
           if (cmd.effect.info) this.effectInfo.slideSpeed = cmd.effect.info;
           break;
         case Effect.Offset:
-          this.doEffectOffset(cmd.effect.info);
+          if (cmd.effect.info) this.effectInfo.offset = cmd.effect.info;
+          this.doEffectOffset(this.effectInfo.offset);
           break;
         case Effect.Retrig:
           if (cmd.effect.info) this.effectInfo.retrig = cmd.effect.info;
           break;
         case Effect.Tremolo:
-          if (cmd.effect.info) this.effectInfo.tremolo = cmd.effect.info;
+          let tremSpeed = (cmd.effect.info & 0xf0) >> 4;
+          let tremDepth = cmd.effect.info & 0x0f;
+          if (tremSpeed)
+            this.effectInfo.tremolo =
+              (this.effectInfo.tremolo & 0x0f) | (tremSpeed << 4);
+          if (tremDepth)
+            this.effectInfo.tremolo =
+              (this.effectInfo.tremolo & 0xf0) | tremDepth;
           break;
         case Effect.SMulti:
           this.effectInfo.currentSubeffect = (cmd.effect.info & 0xf0) >> 4;
           let subinfo = cmd.effect.info & 0x0f;
+          let subtime = Math.max(targetTime, this.ctx.currentTime);
           switch (this.effectInfo.currentSubeffect) {
+            case Subeffect.SetFilter:
+              break;
+            case Subeffect.Glissando:
+              this.effectInfo.glissando = subinfo != 0;
+              break;
+            case Subeffect.SetFinetune:
+              if (this.state.sample) {
+                const kFinetuneTable = [
+                  7895, 7941, 7985, 8046, 8107, 8169, 8232, 8280, 8363, 8413,
+                  8463, 8529, 8581, 8651, 8723, 8757,
+                ];
+                this.state.sample.middleCFreq = kFinetuneTable[subinfo];
+              }
+              break;
+            case Subeffect.VibratoWaveform:
+              this.effectInfo.vibratoWaveform = subinfo;
+              break;
+            case Subeffect.TremoloWaveform:
+              this.effectInfo.tremoloWaveform = subinfo;
+              break;
+            case Subeffect.Pan:
+              let pan8 = Math.max(-1, Math.min(1, subinfo / 7.5 - 1));
+              this.panner.pan.setValueAtTime(pan8, subtime);
+              break;
+            case Subeffect.StereoControl:
+              let pA = subinfo > 7 ? subinfo - 8 : subinfo + 8;
+              let panA = Math.max(-1, Math.min(1, pA / 7.5 - 1));
+              this.panner.pan.setValueAtTime(panA, subtime);
+              break;
+            case Subeffect.PatternLoop:
+              if (subinfo == 0) {
+                this.effectInfo.patternLoopRow = this.player.row;
+              } else {
+                if (this.effectInfo.patternLoopCount == 0) {
+                  this.effectInfo.patternLoopCount = subinfo;
+                } else {
+                  this.effectInfo.patternLoopCount--;
+                }
+                if (this.effectInfo.patternLoopCount > 0) {
+                  this.player.jumpToRow(this.effectInfo.patternLoopRow);
+                }
+              }
+              break;
+            case Subeffect.NoteCut:
+              this.effectInfo.noteCut = subinfo;
+              if (subinfo == 0) {
+                this.nextState.volume = 0;
+                this.nextState.volumeDelta = 0;
+              }
+              break;
             case Subeffect.NoteDelay:
               this.effectInfo.noteDelay = subinfo;
               this.effectInfo.stateChange = this.nextState;
               this.nextState = EmptyNextState();
               break;
+            case Subeffect.PatternDelay:
+              this.player.setPatternDelay(subinfo);
+              break;
+            case Subeffect.FunkRepeat:
+              break;
             default:
               console.log(
                 `Unknown subeffect: ${this.effectInfo.currentSubeffect
-                  .toString()
+                  .toString(16)
                   .toUpperCase()}`
               );
           }
           break;
         case Effect.Tempo:
-          this.player.tempo = cmd.effect.info;
+          if (cmd.effect.info >= 32) this.player.tempo = cmd.effect.info;
           break;
         case Effect.FineVibrato:
-          if (cmd.effect.info) this.effectInfo.vibrato = cmd.effect.info;
+          let fineSpeed = (cmd.effect.info & 0xf0) >> 4;
+          let fineDepth = cmd.effect.info & 0x0f;
+          if (fineSpeed)
+            this.effectInfo.vibrato =
+              (this.effectInfo.vibrato & 0x0f) | (fineSpeed << 4);
+          if (fineDepth)
+            this.effectInfo.vibrato =
+              (this.effectInfo.vibrato & 0xf0) | fineDepth;
           this.doEffectVibrato(true);
           break;
         case Effect.Volume:
           this.player.setVolume(
             Math.max(0, Math.min(1, cmd.effect.info / 64)),
             targetTime
+          );
+          break;
+        case Effect.Pan:
+          let pan = Math.max(-1, Math.min(1, cmd.effect.info / 128 - 1));
+          this.panner.pan.setValueAtTime(
+            pan,
+            Math.max(targetTime, this.ctx.currentTime)
           );
           break;
         default:
@@ -546,6 +671,9 @@ class ChannelPlayer {
         break;
       case Effect.SMulti:
         switch (this.effectInfo.currentSubeffect) {
+          case Subeffect.NoteCut:
+            this.doSubeffectNoteCut();
+            break;
           case Subeffect.NoteDelay:
             this.doSubeffectNoteDelay();
             break;
@@ -676,7 +804,9 @@ class ChannelPlayer {
         period += param * 4;
       }
     }
-    period = Math.min(kNotePeriods[0], period);
+    let middleCFreq = state.sample?.middleCFreq || kC2Spd;
+    let maxPeriod = (kC2Spd * kNotePeriods[0]) / middleCFreq;
+    period = Math.min(maxPeriod, period);
     this.nextState.period = period;
   }
 
@@ -696,14 +826,17 @@ class ChannelPlayer {
         period -= param * 4;
       }
     }
-    period = Math.max(kNotePeriods[kNotePeriods.length - 1], period);
+    let middleCFreq = state.sample?.middleCFreq || kC2Spd;
+    let minPeriod =
+      (kC2Spd * kNotePeriods[kNotePeriods.length - 1]) / middleCFreq;
+    period = Math.max(minPeriod, period);
     this.nextState.period = period;
   }
 
   private doEffectNotePortamento() {
     let state = ApplyStateChange(this.state, this.nextState);
     let tick = this.player.tick;
-    let param = this.effectInfo.portamentoSpeed;
+    let param = this.effectInfo.tonePortamentoSpeed;
     let target = this.effectInfo.periodToPortamento;
     let period = state.period;
     if (tick > 0) {
@@ -713,7 +846,22 @@ class ChannelPlayer {
         period = Math.max(target, period - param * 4);
       }
     }
-    this.nextState.period = period;
+    if (this.effectInfo.glissando) {
+      let middleCFreq = state.sample?.middleCFreq || kC2Spd;
+      let closestPeriod = period;
+      let minDiff = Infinity;
+      for (let p of kNotePeriods) {
+        let scaled = (kC2Spd * p) / middleCFreq;
+        let diff = Math.abs(scaled - period);
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestPeriod = scaled;
+        }
+      }
+      this.nextState.period = closestPeriod;
+    } else {
+      this.nextState.period = period;
+    }
   }
 
   private doEffectVibrato(fine?: boolean) {
@@ -723,10 +871,24 @@ class ChannelPlayer {
     let speed = (param & 0xf0) >> 4;
     let depth = param & 0x0f;
     let position = state.vibratoPosition;
-    let delta = Math.floor(
-      (kVibratoWave[position >= 0 ? position : 32 + position] * depth) / 128
-    );
-    if (state.vibratoPosition < 0) delta *= -1;
+    let waveType = this.effectInfo.vibratoWaveform & 3;
+    let waveVal = 0;
+    let posAbs = position >= 0 ? position : 32 + position;
+    switch (waveType) {
+      case 0:
+      case 3:
+        waveVal = kVibratoWave[posAbs];
+        break;
+      case 1:
+        waveVal = posAbs * 8;
+        if (position < 0) waveVal = 255 - waveVal;
+        break;
+      case 2:
+        waveVal = 255;
+        break;
+    }
+    let delta = Math.floor((waveVal * depth) / 128);
+    if (position < 0) delta *= -1;
     if (tick > 0) {
       position += speed;
       if (position > 31) position -= 64;
@@ -755,7 +917,9 @@ class ChannelPlayer {
     } else if (state.note != "off") {
       let index = state.note + semitone[note - 1];
       index = Math.max(0, Math.min(kNotePeriods.length - 1, index));
-      this.nextState.periodDelta = kNotePeriods[index] - state.period;
+      let middleCFreq = state.sample?.middleCFreq || kC2Spd;
+      let targetPeriod = (kC2Spd * kNotePeriods[index]) / middleCFreq;
+      this.nextState.periodDelta = targetPeriod - state.period;
     }
   }
 
@@ -780,30 +944,54 @@ class ChannelPlayer {
     let param = this.effectInfo.retrig;
     let slide = (param & 0xf0) >> 4;
     let ticks = param & 0x0f;
-    if (ticks % tick != 0) return;
+    if (ticks == 0 || tick % ticks != 0) return;
     this.nextState.period = this.state.period;
     this.nextState.sample = this.state.sample;
     let gain = Math.round(this.state.volume * 64);
-    const slide_amounts = [
-      0,
-      -1,
-      -2,
-      -4,
-      -8,
-      -16,
-      2 / 3,
-      1 / 2,
-      0,
-      1,
-      2,
-      4,
-      8,
-      16,
-      3 / 2,
-      2,
-    ];
-    let amount = slide_amounts[slide];
-    gain += amount;
+    switch (slide) {
+      case 1:
+        gain -= 1;
+        break;
+      case 2:
+        gain -= 2;
+        break;
+      case 3:
+        gain -= 4;
+        break;
+      case 4:
+        gain -= 8;
+        break;
+      case 5:
+        gain -= 16;
+        break;
+      case 6:
+        gain = Math.floor((gain * 2) / 3);
+        break;
+      case 7:
+        gain = Math.floor(gain / 2);
+        break;
+      case 9:
+        gain += 1;
+        break;
+      case 10:
+        gain += 2;
+        break;
+      case 11:
+        gain += 4;
+        break;
+      case 12:
+        gain += 8;
+        break;
+      case 13:
+        gain += 16;
+        break;
+      case 14:
+        gain = Math.floor((gain * 3) / 2);
+        break;
+      case 15:
+        gain = gain * 2;
+        break;
+    }
     gain = Math.max(0, Math.min(64, gain));
     this.nextState.volume = gain / 64;
     this.nextState.volumeDelta = 0;
@@ -816,9 +1004,23 @@ class ChannelPlayer {
     let speed = (param & 0xf0) >> 4;
     let depth = param & 0x0f;
     let position = state.tremoloPosition;
-    let delta = Math.floor(
-      (kVibratoWave[position >= 0 ? position : 32 + position] * depth) / 64
-    );
+    let waveType = this.effectInfo.tremoloWaveform & 3;
+    let waveVal = 0;
+    let posAbs = position >= 0 ? position : 32 + position;
+    switch (waveType) {
+      case 0:
+      case 3:
+        waveVal = kVibratoWave[posAbs];
+        break;
+      case 1:
+        waveVal = posAbs * 8;
+        if (position < 0) waveVal = 255 - waveVal;
+        break;
+      case 2:
+        waveVal = 255;
+        break;
+    }
+    let delta = Math.floor((waveVal * depth) / 64);
     if (state.tremoloPosition < 0) delta *= -1;
     if (tick > 0) {
       position += speed;
@@ -826,6 +1028,14 @@ class ChannelPlayer {
     }
     this.nextState.tremoloPosition = position;
     this.nextState.volumeDelta = delta / 64;
+  }
+
+  private doSubeffectNoteCut() {
+    let tick = this.player.tick;
+    if (tick == this.effectInfo.noteCut) {
+      this.nextState.volume = 0;
+      this.nextState.volumeDelta = 0;
+    }
   }
 
   private doSubeffectNoteDelay() {
@@ -842,14 +1052,22 @@ class EffectInfo {
   currentSubeffect?: number;
   slideSpeed: number = 0;
   portamentoSpeed: number = 0;
+  tonePortamentoSpeed: number = 0;
   periodToPortamento: number = 0;
   vibrato: number = 0;
+  vibratoWaveform: number = 0;
   tremor: number = 0;
   arpeggio: number = 0;
+  offset: number = 0;
   noteDelay: number = 0;
+  noteCut: number = 0;
   stateChange?: NextState;
   retrig: number = 0;
   tremolo: number = 0;
+  tremoloWaveform: number = 0;
+  glissando: boolean = false;
+  patternLoopRow: number = 0;
+  patternLoopCount: number = 0;
 }
 
 type Sample = {
